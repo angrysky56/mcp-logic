@@ -1,6 +1,16 @@
 # MCP-Logic
 
-An MCP server providing automated reasoning capabilities using Prover9/Mace4 for AI systems. This server enables logical theorem proving and model finding through a clean MCP interface.
+An MCP server providing automated reasoning capabilities using Prover9/Mace4 for AI systems. This server enables logical theorem proving and logical model verification through a clean MCP interface.
+
+## Design Philosophy
+
+MCP-Logic bridges the gap between AI systems and formal logic by providing a robust interface to Prover9/Mace4. What makes it special:
+
+- **AI-First Design**: Built specifically for AI systems to perform automated reasoning
+- **Knowledge Validation**: Enables formal verification of knowledge representations and logical implications
+- **Clean Integration**: Seamless integration with the Model Context Protocol (MCP) ecosystem
+- **Deep Reasoning**: Support for complex logical proofs with nested quantifiers and multiple premises
+- **Real-World Applications**: Particularly useful for validating AI knowledge models and reasoning chains
 
 ## Features
 
@@ -12,6 +22,8 @@ An MCP server providing automated reasoning capabilities using Prover9/Mace4 for
 - Support for knowledge representation and reasoning about AI systems
 
 ## Quick Example
+
+![image](https://github.com/user-attachments/assets/42756e3d-c2fa-475f-8e8a-25f7e444b2a4)
 
 ```python
 # Prove that understanding + context leads to application
