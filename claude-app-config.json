@@ -1,0 +1,18 @@
+{
+  "app": {
+    "version": "1"
+  },
+  "mcpServers": {
+    "mcp-logic": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "F:/GithubRepos/repo-development/mcp-logic/src/mcp_logic",
+        "run",
+        "mcp_logic",
+        "--prover-path",
+        "F:/Prover9-Mace4/bin-win32"
+      ]
+    }
+  }
+}
