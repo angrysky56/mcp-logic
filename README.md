@@ -60,15 +60,14 @@ result = await prove(
 2. Clone this repository
 3. Install dependencies:
 
-
+```python
 uv venv
 uv pip install -e .
-
+```
 
 ### Configuration
 
 Add to your MCP environment configuration:
-
 
 {
   "mcpServers": {
@@ -129,7 +128,7 @@ See the [Documents](./Documents) folder for detailed analysis and examples:
 
 ## Project Structure
 
-
+```markdown
 mcp-logic/
 ├── src/
 │   └── mcp_logic/
@@ -140,6 +139,7 @@ mcp-logic/
 ├── Documents/           # Analysis and documentation
 ├── pyproject.toml      # Python package config
 └── README.md          # This file
+```
 
 ## Development
 
