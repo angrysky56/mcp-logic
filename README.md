@@ -52,7 +52,7 @@ result = await prove(
 
 - Python 3.12+
 - UV package manager
-- Prover9/Mace4 binaries (from <https://www.cs.unm.edu/~mccune/prover9/gui/v05.html>)
+- Download Prover9/Mace4 with the given fixes for your platform (from <https://www.cs.unm.edu/~mccune/prover9/gui/v05.html>)
 
 ### Setup
 
