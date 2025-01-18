@@ -85,7 +85,7 @@ Add to your MCP environment configuration:
     }
   }
 }
----
+```
 
 ## Available Tools
 
