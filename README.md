@@ -69,6 +69,7 @@ uv pip install -e .
 
 Add to your MCP environment configuration:
 
+```json
 {
   "mcpServers": {
     "mcp-logic": {
@@ -84,6 +85,7 @@ Add to your MCP environment configuration:
     }
   }
 }
+---
 
 ## Available Tools
 
