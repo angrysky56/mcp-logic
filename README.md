@@ -132,6 +132,8 @@ Replace "/path/to/mcp-logic" with your actual repository path.
 
 ## Available Tools
 
+![image](https://github.com/user-attachments/assets/a78ba32a-c0a8-4e44-9429-b2c9af57129d)
+
 ### prove
 
 Run logical proofs using Prover9:
