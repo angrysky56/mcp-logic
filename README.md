@@ -97,7 +97,9 @@ If you prefer to run with Docker this script:
 ```bash
 # Linux/macOS
 ./run-mcp-logic.sh
+```
 
+```bash
 # Windows
 run-mcp-logic.bat
 ```
