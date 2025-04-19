@@ -16,15 +16,19 @@ logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger('mcp_logic')
 
 class LogicEngine:
+
     def __init__(self, prover_path: str):
-        """Initialize connection to Prover9"""
-        self.prover_path = Path(prover_path)
-        self.prover_exe = self.prover_path / "prover9.exe"
-        
-        if not self.prover_exe.exists():
-            raise FileNotFoundError(f"Prover9 not found at {self.prover_exe}")
-        
-        logger.debug(f"Initialized Logic Engine with Prover9 at {self.prover_exe}")
+       """Initialize connection to Prover9"""
+       self.prover_path = Path(prover_path)
+       # Try both prover9.exe (Windows) and prover9 (Linux/Mac)
+       self.prover_exe = self.prover_path / "prover9.exe"
+       if not self.prover_exe.exists():
+           # Try without .exe extension for Linux/Mac
+           self.prover_exe = self.prover_path / "prover9"
+           if not self.prover_exe.exists():
+               raise FileNotFoundError(f"Prover9 not found at {self.prover_exe} or with .exe extension")
+       
+       logger.debug(f"Initialized Logic Engine with Prover9 at {self.prover_exe}")   
 
     def _create_input_file(self, premises: List[str], goal: str) -> Path:
         """Create a Prover9 input file"""
@@ -212,3 +216,4 @@ def cli():
 
 if __name__ == '__main__':
     cli()
+

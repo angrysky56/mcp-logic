@@ -28,3 +28,7 @@ build/
 # Project specific
 test.in
 *.lock
+
+docker-env/
+ladr/
+.serena
