@@ -145,8 +145,8 @@ class Mace4Wrapper:
                 try:
                     size = int(line.split()[-1])
                     model["domain_size"] = size
-                except:
-                    pass
+                except (ValueError, IndexError):
+                    pass  # Failed to parse domain size, not critical
 
         # Extract interpretation block
         if "interpretation(" in output:
