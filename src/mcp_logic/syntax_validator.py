@@ -5,7 +5,7 @@ Provides early feedback on common syntax errors to improve user experience.
 """
 
 import re
-from typing import List, Dict, Tuple
+from typing import Dict, List, Tuple
 
 
 class SyntaxValidator:
@@ -80,24 +80,32 @@ class SyntaxValidator:
                 var = match.group(1)
                 # Check if variable follows quantifier is lowercase
                 if not var[0].islower():
-                    self.warnings.append(f"Quantifier variable '{var}' should start with lowercase")
+                    self.warnings.append(
+                        f"Quantifier variable '{var}' should start with lowercase"
+                    )
 
                 # Check if there's a formula after the quantifier
                 pos = match.end()
                 remaining = formula[pos:].lstrip()
                 if not remaining or remaining[0] != "(":
-                    self.errors.append(f"Quantifier '{quantifier} {var}' must be followed by a formula in parentheses")
+                    self.errors.append(
+                        f"Quantifier '{quantifier} {var}' must be followed by a formula in parentheses"
+                    )
 
     def _check_operators(self, formula: str):
         """Check operator usage"""
         # Check for double operators (likely mistakes)
         for op in ["&", "|"]:
             if op + op in formula:
-                self.warnings.append(f"Double operator '{op}{op}' found - did you mean to use it twice?")
+                self.warnings.append(
+                    f"Double operator '{op}{op}' found - did you mean to use it twice?"
+                )
 
         # Check for implication chains without parentheses
         if formula.count("->") > 1 and formula.count("(") == 0:
-            self.warnings.append("Multiple implications without parentheses - consider adding parentheses for clarity")
+            self.warnings.append(
+                "Multiple implications without parentheses - consider adding parentheses for clarity"
+            )
 
     def _check_naming(self, formula: str):
         """Check predicate/function naming conventions"""
@@ -115,11 +123,15 @@ class SyntaxValidator:
 
             # Predicates should start with lowercase
             if name[0].isupper():
-                self.warnings.append(f"Predicate/function '{name}' starts with uppercase - consider using lowercase for consistency")
+                self.warnings.append(
+                    f"Predicate/function '{name}' starts with uppercase - consider using lowercase for consistency"
+                )
 
             # Check for reserved words
             if name in self.RESERVED:
-                self.errors.append(f"'{name}' is a reserved keyword and cannot be used as a predicate/function")
+                self.errors.append(
+                    f"'{name}' is a reserved keyword and cannot be used as a predicate/function"
+                )
 
     def _check_common_mistakes(self, formula: str):
         """Check for common syntax mistakes"""
@@ -128,15 +140,21 @@ class SyntaxValidator:
             # Check for operators without spaces
             pattern = rf"\w{re.escape(op)}\w"
             if re.search(pattern, formula):
-                self.warnings.append(f"Consider adding spaces around '{op}' for readability")
+                self.warnings.append(
+                    f"Consider adding spaces around '{op}' for readability"
+                )
 
         # Unquoted strings (should be predicates)
         if '"' in formula or "'" in formula:
-            self.warnings.append("Strings in quotes are not standard in first-order logic - use predicates or constants instead")
+            self.warnings.append(
+                "Strings in quotes are not standard in first-order logic - use predicates or constants instead"
+            )
 
         # Empty parentheses
         if "()" in formula:
-            self.errors.append("Empty parentheses found - predicates and functions must have arguments")
+            self.errors.append(
+                "Empty parentheses found - predicates and functions must have arguments"
+            )
 
 
 def validate_formulas(formulas: List[str]) -> Dict[str, any]:
@@ -151,10 +169,15 @@ def validate_formulas(formulas: List[str]) -> Dict[str, any]:
     validator = SyntaxValidator()
     results = {"valid": True, "formula_results": []}
 
-    for i, formula in enumerate(formulas):
+    for formula in formulas:
         is_valid, errors, warnings = validator.validate(formula)
 
-        formula_result = {"formula": formula, "valid": is_valid, "errors": errors, "warnings": warnings}
+        formula_result = {
+            "formula": formula,
+            "valid": is_valid,
+            "errors": errors,
+            "warnings": warnings,
+        }
 
         results["formula_results"].append(formula_result)
 

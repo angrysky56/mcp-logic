@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "mcp-logic": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/your-path-to/mcp-logic/src/mcp_logic",
+        "run",
+        "mcp_logic",
+        "--prover-path",
+        "/your-path-to/mcp-logic/ladr/bin"
+      ]
+    }
+  }
+}

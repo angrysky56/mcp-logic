@@ -4,7 +4,7 @@ Categorical reasoning helpers for translating categorical properties to FOL.
 Provides utilities for working with category theory concepts in first-order logic.
 """
 
-from typing import List, Dict, Tuple
+from typing import Dict, List, Tuple
 
 
 class CategoricalHelpers:
@@ -51,7 +51,9 @@ class CategoricalHelpers:
         ]
 
     @staticmethod
-    def verify_commutativity(path_a: List[str], path_b: List[str], object_start: str, object_end: str) -> Tuple[List[str], str]:
+    def verify_commutativity(
+        path_a: List[str], path_b: List[str], object_start: str, object_end: str
+    ) -> Tuple[List[str], str]:
         """Generate FOL to verify diagram commutativity
 
         Two paths in a diagram commute if composing morphisms along each path
@@ -103,7 +105,9 @@ class CategoricalHelpers:
         return (premises, conclusion)
 
     @staticmethod
-    def natural_transformation_condition(functor_f: str = "F", functor_g: str = "G", component: str = "alpha") -> List[str]:
+    def natural_transformation_condition(
+        functor_f: str = "F", functor_g: str = "G", component: str = "alpha"
+    ) -> List[str]:
         """Generate naturality condition for a natural transformation
 
         For natural transformation α: F ⇒ G, the naturality square must commute:

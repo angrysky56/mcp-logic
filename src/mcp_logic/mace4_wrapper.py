@@ -32,11 +32,18 @@ class Mace4Wrapper:
         if not self.mace4_exe.exists():
             self.mace4_exe = self.mace4_path / "mace4"
             if not self.mace4_exe.exists():
-                raise FileNotFoundError(f"Mace4 not found at {self.mace4_exe} or with .exe extension")
+                raise FileNotFoundError(
+                    f"Mace4 not found at {self.mace4_exe} or with .exe extension"
+                )
 
-        logger.debug(f"Initialized Mace4 wrapper with Mace4 at {self.mace4_exe}")
+        logger.debug("Initialized Mace4 wrapper with Mace4 at %s", self.mace4_exe)
 
-    def _create_input_file(self, premises: List[str], goal: Optional[str] = None, domain_size: Optional[int] = None) -> Path:
+    def _create_input_file(
+        self,
+        premises: List[str],
+        goal: Optional[str] = None,
+        domain_size: Optional[int] = None,
+    ) -> Path:
         """Create a Mace4 input file
 
         Args:
@@ -76,7 +83,7 @@ class Mace4Wrapper:
             content.append("end_of_list.")
 
         input_content = "\n".join(content)
-        logger.debug(f"Created Mace4 input file content:\n{input_content}")
+        logger.debug("Created Mace4 input file content:\n%s", input_content)
 
         fd, path = tempfile.mkstemp(suffix=".in", text=True)
         with os.fdopen(fd, "w") as f:
@@ -94,33 +101,62 @@ class Mace4Wrapper:
             Dictionary with result, model details, and output
         """
         try:
-            logger.debug(f"Running Mace4 with input file: {input_path}")
+            logger.debug("Running Mace4 with input file: %s", input_path)
 
             # Set working directory to Mace4 directory
             cwd = str(self.mace4_exe.parent)
-            result = subprocess.run([str(self.mace4_exe), "-f", str(input_path)], capture_output=True, text=True, timeout=timeout, cwd=cwd)
+            result = subprocess.run(
+                [str(self.mace4_exe), "-f", str(input_path)],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                cwd=cwd,
+                check=False,
+            )
 
-            logger.debug(f"Mace4 stdout:\n{result.stdout}")
+            logger.debug("Mace4 stdout:\n%s", result.stdout)
             if result.stderr:
-                logger.debug(f"Mace4 stderr:\n{result.stderr}")
+                logger.debug("Mace4 stderr:\n%s", result.stderr)
 
             # Parse Mace4 output
             if "DOMAIN SIZE" in result.stdout and "interpretation(" in result.stdout:
                 # Model found!
                 model = self._parse_model(result.stdout)
-                return {"result": "model_found", "model": model, "complete_output": result.stdout}
-            elif "SEARCH FAILED" in result.stdout or "SEARCH TERMINATED" in result.stdout:
-                return {"result": "no_model_found", "reason": "No finite model found within domain size limits", "complete_output": result.stdout}
+                return {
+                    "result": "model_found",
+                    "model": model,
+                    "complete_output": result.stdout,
+                }
+            elif (
+                "SEARCH FAILED" in result.stdout or "SEARCH TERMINATED" in result.stdout
+            ):
+                return {
+                    "result": "no_model_found",
+                    "reason": "No finite model found within domain size limits",
+                    "complete_output": result.stdout,
+                }
             elif "Fatal error" in result.stderr or "Fatal error" in result.stdout:
-                return {"result": "error", "reason": "Syntax error or invalid input", "error": result.stderr if result.stderr else result.stdout}
+                return {
+                    "result": "error",
+                    "reason": "Syntax error or invalid input",
+                    "error": result.stderr if result.stderr else result.stdout,
+                }
             else:
-                return {"result": "unknown", "reason": "Unexpected Mace4 output", "output": result.stdout, "error": result.stderr}
+                return {
+                    "result": "unknown",
+                    "reason": "Unexpected Mace4 output",
+                    "output": result.stdout,
+                    "error": result.stderr,
+                }
 
         except subprocess.TimeoutExpired:
-            logger.error(f"Mace4 search timed out after {timeout} seconds")
-            return {"result": "timeout", "reason": f"Model search exceeded {timeout} seconds"}
-        except Exception as e:
-            logger.error(f"Mace4 error: {e}")
+            logger.error("Mace4 search timed out after %d seconds", timeout)
+            return {
+                "result": "timeout",
+                "reason": f"Model search exceeded {timeout} seconds",
+            }
+        except (subprocess.SubprocessError, OSError, ValueError) as e:
+            logger.error("Mace4 error: %s", e)
             return {"result": "error", "reason": str(e)}
         finally:
             try:
@@ -137,7 +173,13 @@ class Mace4Wrapper:
         Returns:
             Structured model representation
         """
-        model = {"domain_size": None, "predicates": {}, "functions": {}, "constants": {}, "raw_interpretation": ""}
+        model = {
+            "domain_size": None,
+            "predicates": {},
+            "functions": {},
+            "constants": {},
+            "raw_interpretation": "",
+        }
 
         # Extract domain size
         for line in output.split("\n"):
@@ -166,7 +208,9 @@ class Mace4Wrapper:
 
         return model
 
-    def find_model(self, premises: List[str], domain_size: Optional[int] = None) -> Dict[str, Any]:
+    def find_model(
+        self, premises: List[str], domain_size: Optional[int] = None
+    ) -> Dict[str, Any]:
         """Find a model that satisfies the given premises
 
         Args:
@@ -176,10 +220,14 @@ class Mace4Wrapper:
         Returns:
             Result dictionary with model if found
         """
-        input_file = self._create_input_file(premises, goal=None, domain_size=domain_size)
+        input_file = self._create_input_file(
+            premises, goal=None, domain_size=domain_size
+        )
         return self._run_mace4(input_file)
 
-    def find_counterexample(self, premises: List[str], conclusion: str, domain_size: Optional[int] = None) -> Dict[str, Any]:
+    def find_counterexample(
+        self, premises: List[str], conclusion: str, domain_size: Optional[int] = None
+    ) -> Dict[str, Any]:
         """Find a counterexample showing the conclusion doesn't follow from premises
 
         This searches for a model where all premises are true but the conclusion is false.
@@ -193,11 +241,16 @@ class Mace4Wrapper:
         Returns:
             Result dictionary with counterexample model if found
         """
-        input_file = self._create_input_file(premises, goal=conclusion, domain_size=domain_size)
+        input_file = self._create_input_file(
+            premises, goal=conclusion, domain_size=domain_size
+        )
         result = self._run_mace4(input_file)
 
         # If we found a model, it's a counterexample
         if result["result"] == "model_found":
-            result["interpretation"] = f"Counterexample found: The premises are satisfied but the conclusion '{conclusion}' is FALSE in this model."
+            result["interpretation"] = (
+                f"Counterexample found: The premises are satisfied but "
+                f"the conclusion '{conclusion}' is FALSE in this model."
+            )
 
         return result
