@@ -9,6 +9,8 @@ An MCP server for automated first-order logic reasoning using Prover9 and Mace4.
 - **Counterexample Finding** - Show why statements don't follow
 - **Syntax Validation** - Pre-validate formulas with helpful error messages
 - **Categorical Reasoning** - Built-in support for category theory proofs
+- **Propositional Contingency** - Purely analytical HCC prover for fast propositional checks
+- **Abductive Reasoning** - Rank hypotheses using Variational Free Energy (VFE)
 - **Self-Contained** - All dependencies install automatically
 
 ## Quick Start
@@ -64,14 +66,16 @@ Add to your Claude Desktop MCP config (auto-generated at `claude-app-config.json
 
 ## Available Tools
 
-| Tool                     | Purpose                                              |
-| ------------------------ | ---------------------------------------------------- |
-| **prove**                | Prove statements using Prover9                       |
-| **check-well-formed**    | Validate formula syntax with detailed errors         |
-| **find-model**           | Find finite models satisfying premises               |
-| **find-counterexample**  | Find counterexamples showing statements don't follow |
-| **verify-commutativity** | Generate FOL for categorical diagram commutativity   |
-| **get-category-axioms**  | Get axioms for category/functor/group/monoid         |
+| Tool                     | Purpose                                                |
+| ------------------------ | ------------------------------------------------------ |
+| **prove**                | Prove statements using Prover9                         |
+| **check-well-formed**    | Validate formula syntax with detailed errors           |
+| **find_model**           | Find finite models satisfying premises                 |
+| **find_counterexample**  | Find counterexamples showing statements don't follow   |
+| **verify_commutativity** | Generate FOL for categorical diagram commutativity     |
+| **get_category_axioms**  | Get axioms for category/functor/group/monoid           |
+| **check_contingency**    | Check truth-functional contingency via HCC prover      |
+| **abductive_explain**    | Find the VFE-minimizing explanation for an observation |
 
 ## Example Usage
 
@@ -84,6 +88,15 @@ conclusion: "mortal(socrates)"
 ```
 
 **Result:** ✓ THEOREM PROVED
+
+### Analyze Propositional Contingency
+
+```
+Use the mcp-logic check_contingency tool with:
+formula: "(p -> q) | (q -> p)"
+```
+
+**Result:** Identifies that the formula is a non-contingent **tautology**, returning the proof trace.
 
 ### Find a Counterexample
 
@@ -128,10 +141,13 @@ run_mcp_logic.bat
 ```
 mcp-logic/
 ├── src/mcp_logic/
-│   ├── server.py              # Main MCP server (6 tools)
+│   ├── server.py              # Main MCP server (8 tools)
 │   ├── mace4_wrapper.py       # Mace4 model finder
 │   ├── syntax_validator.py    # Formula syntax validation
-│   └── categorical_helpers.py # Category theory utilities
+│   ├── categorical_helpers.py # Category theory utilities
+│   ├── hcc_prover.py          # Hypersequent Contingency Calculus prover
+│   ├── vfe_engine.py          # Variational Free Energy abductive engine
+│   └── formula_ast.py         # Propositional logic AST and parser
 ├── ladr/                      # Auto-installed Prover9/Mace4 binaries
 │   └── bin/
 │       ├── prover9
@@ -142,6 +158,14 @@ mcp-logic/
 ├── run_mcp_logic.sh           # Linux/macOS run script
 └── run_mcp_logic.bat          # Windows run script
 ```
+
+## What's New in v0.3.0
+
+**Cognitive Architecture Enhancements:**
+
+- ✅ **Hypersequent Contingency Calculus (HCC):** Added a rigorous deductive checker for evaluating propositional formula contingencies instantly without brute-force modeling.
+- ✅ **Variational Free Energy (VFE) Engine:** Implemented abductive reasoning that ranks hypotheses using a non-dogmatic Cournot-Gaifman prior to elegantly satisfy Ockham's Razor.
+- ✅ **Smart Prover Routing:** `prove` tool automatically routes pure propositional queries to the HCC engine, and first-order queries to Prover9.
 
 ## What's New in v0.2.0
 
@@ -183,7 +207,7 @@ python tests/test_enhancements.py
 
 **Server not updating:**
 
-- Restart Claude Desktop after code changes
+- Restart server after code changes
 - Check logs for syntax errors
 
 **Syntax validation warnings:**
@@ -200,3 +224,4 @@ MIT
 
 - **Prover9/Mace4**: William McCune's LADR library
 - **LADR Repository**: [laitep/ladr](https://github.com/laitep/ladr)
+- **Hypersequent Contingency Calculus (HCC)**: Based on the logical framework from "A Hypersequent Calculus for Classical Contingencies" by Eugenio Orlandelli, Giannandrea Pulcini, and Achille C. Varzi (2024).

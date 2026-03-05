@@ -2,7 +2,7 @@
 
 ## Overview
 
-You have access to **mcp-logic**, a formal reasoning server that provides automated theorem proving (Prover9), model finding (Mace4), and categorical reasoning utilities. Use these tools to verify logical arguments, find counterexamples, and work with category theory.
+You have access to **mcp-logic**, a formal reasoning server that provides automated theorem proving (Prover9), model finding (Mace4), categorical reasoning utilities, and abductive inference. Use these tools to verify logical arguments, find counterexamples, and work with category theory.
 
 ## Available Tools
 
@@ -27,7 +27,7 @@ You have access to **mcp-logic**, a formal reasoning server that provides automa
 
 **Best Practices:**
 
-- **Pre-validate syntax** with `check-well-formed` first for complex formulas
+- **Pre-validate syntax** with `check_well_formed` first for complex formulas
 - Use universal quantifiers (`all x`) for general statements
 - Use existential quantifiers (`exists y`) for specific claims
 - Keep predicates lowercase: `man(x)` not `Man(x)`
@@ -47,7 +47,7 @@ User: "Does 'all humans are mortal' and 'Socrates is human' imply Socrates is mo
 
 ---
 
-### 2. `check-well-formed` - Syntax Validation
+### 2. `check_well_formed` - Syntax Validation
 
 **Purpose:** Validate logical formula syntax before attempting proofs.
 
@@ -67,7 +67,7 @@ User: "Does 'all humans are mortal' and 'Socrates is human' imply Socrates is mo
 
 ---
 
-### 3. `find-model` - Model Finding
+### 3. `find_model` - Model Finding
 
 **Purpose:** Find a finite model that satisfies given premises.
 
@@ -91,14 +91,14 @@ User: "Does 'all humans are mortal' and 'Socrates is human' imply Socrates is mo
 ```
 User: "What does group theory with 2 elements look like?"
 
-1. Get group axioms: use get-category-axioms with concept="group"
-2. Use find-model with domain_size=2
+1. Get group axioms: use get_category_axioms with concept="group"
+2. Use find_model with domain_size=2
 3. Interpret the model to show the group structure
 ```
 
 ---
 
-### 4. `find-counterexample` - Counterexample Finding ⭐
+### 4. `find_counterexample` - Counterexample Finding ⭐
 
 **Purpose:** Prove a statement is NOT a valid inference by finding a counterexample.
 
@@ -117,7 +117,7 @@ User: "What does group theory with 2 elements look like?"
 **Critical insight:**
 
 ```
-prove() fails → try find-counterexample()
+prove() fails → try find_counterexample()
   - If counterexample found: conclusion genuinely doesn't follow
   - If no counterexample: might be provable with different strategy or larger domain
 ```
@@ -129,14 +129,14 @@ User: "Does P(a) imply P(b)?"
 
 1. Try prove: premises=["P(a)"], conclusion="P(b)"
 2. Result: unprovable
-3. Use find-counterexample to show why:
+3. Use find_counterexample to show why:
    - Returns model where P(a)=true, P(b)=false
 4. Explain: "No, because P(a) says nothing about b"
 ```
 
 ---
 
-### 5. `verify-commutativity` - Categorical Diagrams
+### 5. `verify_commutativity` - Categorical Diagrams
 
 **Purpose:** Verify that two paths through a categorical diagram yield the same result.
 
@@ -169,15 +169,15 @@ User: "Does P(a) imply P(b)?"
 ```
 User: "Verify that f∘g = h in this diagram"
 
-1. Use verify-commutativity to generate FOL
+1. Use verify_commutativity to generate FOL
 2. Use prove with returned premises and conclusion
 3. If proved: diagram commutes ✓
-4. If not: use find-counterexample to show a category where it fails
+4. If not: use find_counterexample to show a category where it fails
 ```
 
 ---
 
-### 6. `get-category-axioms` - Theory Axioms
+### 6. `get_category_axioms` - Theory Axioms
 
 **Purpose:** Retrieve FOL axioms for mathematical structures.
 
@@ -207,11 +207,65 @@ User: "Verify that f∘g = h in this diagram"
 **Workflow for proving functor properties:**
 
 ```
-1. Get category axioms: get-category-axioms("category")
-2. Get functor axioms: get-category-axioms("functor", functor_name="F")
+1. Get category axioms: get_category_axioms("category")
+2. Get functor axioms: get_category_axioms("functor", functor_name="F")
 3. Add specific functor definition
 4. Use prove to verify property
 ```
+
+---
+
+
+
+### 7. `check_contingency` - Propositional Contingency
+
+**Purpose:** Check if a classical propositional formula is truth-functionally contingent using the Hypersequent Contingency Calculus (HCC).
+
+**When to use:**
+
+- Analyze propositional logic formulas without infinite search spaces.
+- Quickly determine if a formula is a tautology, contradiction, or contingent.
+
+**Input:**
+
+```json
+{
+  "formula": "(P -> Q) | (Q -> P)"
+}
+```
+
+**Returns:**
+
+- `is_contingent: true/false`
+- `is_tautology: true/false`
+- `is_contradiction: true/false`
+- Proof trace summary.
+
+---
+
+### 8. `abductive_explain` - Abductive Reasoning (VFE Engine)
+
+**Purpose:** Find the best explanation for an observation from a list of candidate hypotheses, using Variational Free Energy (VFE) scoring.
+
+**When to use:**
+
+- Rank candidate theories based on their explanatory power and syntactic simplicity.
+- Automate Ockham's Razor via the Cournot-Gaifman prior.
+
+**Input:**
+
+```json
+{
+  "observation": "O",
+  "candidates": ["A & (A -> O)", "B & (B -> O)"]
+}
+```
+
+**Returns:**
+
+- `best_explanation`: The formula with the lowest VFE score.
+- `vfe_score`: The calculated score combining complexity and surprisal.
+- `ranking`: Ordered list of all candidates.
 
 ---
 
@@ -223,7 +277,7 @@ When a proof fails, find out why:
 
 ```
 1. attempt: prove(premises, conclusion)
-2. if fails: find-counterexample(premises, conclusion)
+2. if fails: find_counterexample(premises, conclusion)
 3. if counterexample found:
    - Explain the model to user
    - Show why conclusion doesn't follow
@@ -237,7 +291,7 @@ When a proof fails, find out why:
 For user-provided formulas:
 
 ```
-1. check-well-formed(all_formulas)
+1. check_well_formed(all_formulas)
 2. if valid:
    - prove(premises, conclusion)
 3. if proved:
@@ -251,9 +305,9 @@ For user-provided formulas:
 Structured approach to category theory:
 
 ```
-1. get-category-axioms("category")
+1. get_category_axioms("category")
 2. Add specific morphisms/objects
-3. verify-commutativity(paths...)
+3. verify_commutativity(paths...)
 4. prove(premises, conclusion)
 ```
 
@@ -372,9 +426,9 @@ To prove P:
 
 ```
 1. Start with axioms
-2. find-model to see what structures satisfy them
+2. find_model to see what structures satisfy them
 3. Try to prove interesting properties
-4. If fail, find-counterexample to understand limitations
+4. If fail, find_counterexample to understand limitations
 ```
 
 ### 4. Categorical Functors
@@ -382,8 +436,8 @@ To prove P:
 To verify functor F preserves composition:
 
 ```
-1. get-category-axioms("category")
-2. get-category-axioms("functor", "F")
+1. get_category_axioms("category")
+2. get_category_axioms("functor", "F")
 3. Add: morphism(f), morphism(g), compose(g,f,gf)
 4. Prove: compose(F(g), F(f), F(gf))
 ```
@@ -416,11 +470,11 @@ To verify functor F preserves composition:
 
 ### "Syntax error" from Prover9
 
-→ Use `check-well-formed` to identify exact issue
+→ Use `check_well_formed` to identify exact issue
 
 ### "Proof search failed"
 
-→ Try `find-counterexample` to see if it's actually invalid
+→ Try `find_counterexample` to see if it's actually invalid
 
 ### "No model found within domain limits"
 

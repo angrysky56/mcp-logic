@@ -24,10 +24,12 @@ from mcp_logic.categorical_helpers import (
     group_axioms,
     monoid_axioms,
 )
+from mcp_logic.hcc_prover import check_contingency
 
 # Import new modules
 from mcp_logic.mace4_wrapper import Mace4Wrapper
 from mcp_logic.syntax_validator import validate_formulas
+from mcp_logic.vfe_engine import abductive_explain
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
@@ -155,7 +157,7 @@ async def main(prover_path: str):
         tools = [
             types.Tool(
                 name="prove",
-                description="Prove a logical statement using Prover9",
+                description="Prove a logical statement using Prover9 or HCC",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -173,22 +175,22 @@ async def main(prover_path: str):
                 },
             ),
             types.Tool(
-                name="check-well-formed",
-                description="Check if logical statements are well-formed with detailed syntax validation",
+                name="check_well_formed",
+                description="Check if logical statements are well-formed",
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "statements": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "description": "Logical statements to check for detailed syntax validity",
+                            "description": "Logical statements to check",
                         }
                     },
                     "required": ["statements"],
                 },
             ),
             types.Tool(
-                name="find-model",
+                name="find_model",
                 description="Use Mace4 to find a finite model satisfying the given premises",
                 inputSchema={
                     "type": "object",
@@ -200,17 +202,15 @@ async def main(prover_path: str):
                         },
                         "domain_size": {
                             "type": "integer",
-                            "description": (
-                                "Optional: specific domain size to search (default: incrementally search 2-10)"
-                            ),
+                            "description": "Optional: specific domain size to search",
                         },
                     },
                     "required": ["premises"],
                 },
             ),
             types.Tool(
-                name="find-counterexample",
-                description="Use Mace4 to find a counterexample showing the conclusion doesn't follow from premises",
+                name="find_counterexample",
+                description="Use Mace4 to find a counterexample",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -221,7 +221,7 @@ async def main(prover_path: str):
                         },
                         "conclusion": {
                             "type": "string",
-                            "description": "Conclusion to disprove using Mace4 counterexample search",
+                            "description": "Conclusion to disprove",
                         },
                         "domain_size": {
                             "type": "integer",
@@ -232,8 +232,8 @@ async def main(prover_path: str):
                 },
             ),
             types.Tool(
-                name="verify-commutativity",
-                description="Verify categorical diagram commutativity by generating FOL premises and conclusion",
+                name="verify_commutativity",
+                description="Verify categorical diagram commutativity",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -247,24 +247,15 @@ async def main(prover_path: str):
                             "items": {"type": "string"},
                             "description": "List of morphism names in second path",
                         },
-                        "object_start": {
-                            "type": "string",
-                            "description": "Starting object",
-                        },
-                        "object_end": {
-                            "type": "string",
-                            "description": "Ending object",
-                        },
-                        "with_category_axioms": {
-                            "type": "boolean",
-                            "description": "Include basic category theory axioms (default: true)",
-                        },
+                        "object_start": {"type": "string"},
+                        "object_end": {"type": "string"},
+                        "with_category_axioms": {"type": "boolean"},
                     },
                     "required": ["path_a", "path_b", "object_start", "object_end"],
                 },
             ),
             types.Tool(
-                name="get-category-axioms",
+                name="get_category_axioms",
                 description="Get FOL axioms for category theory (category, functor, group, etc.)",
                 inputSchema={
                     "type": "object",
@@ -286,6 +277,45 @@ async def main(prover_path: str):
                         },
                     },
                     "required": ["concept"],
+                },
+            ),
+            types.Tool(
+                name="check_contingency",
+                description="Check if a classical propositional formula is truth-functionally contingent using HCC",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "formula": {
+                            "type": "string",
+                            "description": "The propositional formula string to check",
+                        }
+                    },
+                    "required": ["formula"],
+                },
+            ),
+            types.Tool(
+                name="abductive_explain",
+                description=(
+                    "Find the VFE-minimizing abductive explanation for an observation from a list of candidates"
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "observation": {
+                            "type": "string",
+                            "description": "The formula string representing the observation",
+                        },
+                        "candidates": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "List of candidate explanation formulas",
+                        },
+                        "max_complexity": {
+                            "type": "integer",
+                            "description": "Optional: maximum complexity bound (default: 20)",
+                        },
+                    },
+                    "required": ["observation", "candidates"],
                 },
             ),
         ]
@@ -313,16 +343,63 @@ async def main(prover_path: str):
                         )
                     ]
 
-                # Run proof
+                # Smart Routing: Check if propositional
+                is_propositional = all(
+                    "all " not in f and "exists " not in f for f in all_formulas
+                )
+
+                if is_propositional:
+                    logger.info("Routing propositional proof to HCC")
+                    # Construct (P1 & P2 & ...) -> G
+                    if not arguments["premises"]:
+                        full_formula = arguments["conclusion"]
+                    else:
+                        premises_joined = " & ".join(
+                            [f"({p})" for p in arguments["premises"]]
+                        )
+                        full_formula = (
+                            f"({premises_joined}) -> ({arguments['conclusion']})"
+                        )
+
+                    try:
+                        hcc_res = check_contingency(full_formula)
+                        results = {
+                            "result": (
+                                "proved"
+                                if hcc_res.is_tautology
+                                else (
+                                    "refuted"
+                                    if hcc_res.is_contradiction
+                                    else "unprovable"
+                                )
+                            ),
+                            "status": hcc_res.message,
+                            "method": "HCC (Propositional)",
+                            "contingent": hcc_res.is_contingent,
+                        }
+                        return [
+                            types.TextContent(
+                                type="text", text=json.dumps(results, indent=2)
+                            )
+                        ]
+                    except ValueError as e:
+                        logger.warning(
+                            "HCC routing failed, falling back to Prover9: %s",
+                            e,
+                            exc_info=True,
+                        )
+
+                # Run proof with Prover9
                 input_file = engine._create_input_file(
                     arguments["premises"], arguments["conclusion"]
                 )
                 results = engine._run_prover(input_file)
+                results["method"] = "Prover9 (FOL)"
                 return [
                     types.TextContent(type="text", text=json.dumps(results, indent=2))
                 ]
 
-            elif name == "check-well-formed":
+            elif name == "check_well_formed":
                 validation = validate_formulas(arguments["statements"])
                 return [
                     types.TextContent(
@@ -330,7 +407,7 @@ async def main(prover_path: str):
                     )
                 ]
 
-            elif name == "find-model":
+            elif name == "find_model":
                 if not engine.mace4:
                     return [
                         types.TextContent(
@@ -345,7 +422,7 @@ async def main(prover_path: str):
                     types.TextContent(type="text", text=json.dumps(result, indent=2))
                 ]
 
-            elif name == "find-counterexample":
+            elif name == "find_counterexample":
                 if not engine.mace4:
                     return [
                         types.TextContent(
@@ -362,7 +439,7 @@ async def main(prover_path: str):
                     types.TextContent(type="text", text=json.dumps(result, indent=2))
                 ]
 
-            elif name == "verify-commutativity":
+            elif name == "verify_commutativity":
                 helpers = CategoricalHelpers()
                 premises, conclusion = helpers.verify_commutativity(
                     arguments["path_a"],
@@ -385,7 +462,7 @@ async def main(prover_path: str):
                     types.TextContent(type="text", text=json.dumps(result, indent=2))
                 ]
 
-            elif name == "get-category-axioms":
+            elif name == "get_category_axioms":
                 helpers = CategoricalHelpers()
                 concept = arguments["concept"]
 
@@ -409,6 +486,62 @@ async def main(prover_path: str):
                     axioms = []
 
                 result = {"concept": concept, "axioms": axioms}
+                return [
+                    types.TextContent(type="text", text=json.dumps(result, indent=2))
+                ]
+
+            elif name == "check_contingency":
+                res = check_contingency(arguments["formula"])
+                # Simplify trace for output
+                simple_trace = [
+                    f"{s.rule}: {s.formula}" for s in res.proof_trace if s.formula
+                ]
+                result = {
+                    "formula": arguments["formula"],
+                    "is_contingent": res.is_contingent,
+                    "is_tautology": res.is_tautology,
+                    "is_contradiction": res.is_contradiction,
+                    "message": res.message,
+                    "proof_trace_summary": simple_trace,
+                }
+                return [
+                    types.TextContent(type="text", text=json.dumps(result, indent=2))
+                ]
+
+            elif name == "abductive_explain":
+                res = abductive_explain(
+                    arguments["observation"],
+                    arguments["candidates"],
+                    arguments.get("max_complexity", 20),
+                )
+                if not res.best_explanation:
+                    return [
+                        types.TextContent(
+                            type="text",
+                            text=json.dumps(
+                                {
+                                    "error": res.message,
+                                    "filtered_out": res.filtered_out_count,
+                                },
+                                indent=2,
+                            ),
+                        )
+                    ]
+
+                result = {
+                    "best_explanation": res.best_explanation.formula_str,
+                    "vfe_score": res.best_explanation.vfe_score,
+                    "complexity": res.best_explanation.complexity,
+                    "message": res.message,
+                    "ranking": [
+                        {
+                            "formula": c.formula_str,
+                            "score": c.vfe_score,
+                            "prior": c.prior,
+                        }
+                        for c in res.all_candidates
+                    ],
+                }
                 return [
                     types.TextContent(type="text", text=json.dumps(result, indent=2))
                 ]
