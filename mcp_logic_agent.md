@@ -215,8 +215,6 @@ User: "Verify that f∘g = h in this diagram"
 
 ---
 
-
-
 ### 7. `check_contingency` - Propositional Contingency
 
 **Purpose:** Check if a classical propositional formula is truth-functionally contingent using the Hypersequent Contingency Calculus (HCC).

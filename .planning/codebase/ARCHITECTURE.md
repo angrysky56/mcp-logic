@@ -8,6 +8,7 @@ focus: arch
 ## Overview
 
 `mcp-logic` is a **Model Context Protocol (MCP) server** that exposes 8 logical reasoning tools to AI clients (primarily Claude Desktop). The architecture is a thin integration layer bridging:
+
 1. **External theorem provers** (Prover9, Mace4 — compiled C binaries)
 2. **Pure-Python reasoning engines** (HCC propositional prover, VFE abductive engine)
 
@@ -76,10 +77,12 @@ else:
 ### Layer 2: Subprocess Wrappers
 
 **`LogicEngine`** (in `server.py`):
+
 - `_create_input_file(premises, goal) -> Path` — writes Prover9-format `.in` temp file
 - `_run_prover(input_path, timeout=60) -> Dict` — runs `prover9 -f <path>`, parses stdout
 
 **`Mace4Wrapper`** (`mace4_wrapper.py`):
+
 - `_create_input_file(premises, goal, domain_size) -> Path` — writes Mace4-format `.in` temp file
 - `_run_mace4(input_path, timeout=60) -> Dict` — runs `mace4 -f <path>`, parses stdout
 - `_parse_model(output: str) -> Dict` — extracts domain size and raw interpretation block
@@ -89,6 +92,7 @@ else:
 ### Layer 3: Pure Python Reasoning
 
 **`formula_ast.py`** — Foundation for propositional logic:
+
 - Immutable dataclass AST: `Var`, `Not`, `And`, `Or` (frozen, slotted)
 - `Formula = Union[Var, Not, And, Or]` type alias
 - Recursive descent parser: `parse(str) -> Formula` with full precedence support
@@ -96,17 +100,20 @@ else:
 - Utilities: `complexity()`, `atoms()`, `is_literal()`, `negate()`, `are_complementary()`
 
 **`hcc_prover.py`** — Hypersequent Contingency Calculus:
+
 - Input: propositional formula string
 - Process: parse → NNF → hypersequent decomposition (OR/AND rules) → axiomatic check
 - Output: `ContingencyResult(is_contingent, is_tautology, is_contradiction, proof_trace, ...)`
 - Used by: `vfe_engine.py` (HCC filtering), `server.py` (check_contingency tool + prove routing)
 
 **`vfe_engine.py`** — Variational Free Energy Abductive Reasoning:
+
 - Input: observation string + list of candidate formula strings + max_complexity
 - Process: parse candidates → HCC filter (contingency check) → complexity bound → Cournot-Gaifman prior → VFE score (Ω = complexity + KL)
 - Output: `AbductionResult(best_explanation, all_candidates, filtered_out_count, message)`
 
 **`categorical_helpers.py`** — Category Theory FOL Generation:
+
 - `CategoricalHelpers.category_axioms()` → 6 FOL strings
 - `CategoricalHelpers.functor_axioms(name)` → 2 FOL strings
 - `CategoricalHelpers.verify_commutativity(path_a, path_b, start, end)` → `(premises, conclusion)`
@@ -114,6 +121,7 @@ else:
 - `monoid_axioms()`, `group_axioms()` — module-level convenience functions
 
 **`syntax_validator.py`** — Pre-flight formula validation:
+
 - `SyntaxValidator.validate(formula)` → `(is_valid, errors, warnings)`
 - Checks: balanced parens, quantifier syntax, operator usage, naming conventions
 - `validate_formulas(List[str]) -> Dict` — batch validation, used in `prove` tool

@@ -2,9 +2,9 @@
 Quick debug test for Mace4
 """
 
+import os
 import subprocess
 import tempfile
-import os
 from pathlib import Path
 
 ladr_path = Path("/home/ty/Repositories/mcp-logic/ladr/bin")
@@ -26,7 +26,13 @@ with os.fdopen(fd, "w") as f:
     f.write(content)
 
 print(f"Running: {mace4_exe} -f {path}")
-result = subprocess.run([str(mace4_exe), "-f", str(path)], capture_output=True, text=True, timeout=10, cwd=str(mace4_exe.parent))
+result = subprocess.run(
+    [str(mace4_exe), "-f", str(path)],
+    capture_output=True,
+    text=True,
+    timeout=10,
+    cwd=str(mace4_exe.parent),
+)
 
 print("STDOUT:")
 print(result.stdout)

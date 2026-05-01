@@ -30,6 +30,7 @@ This guide provides concrete examples and implementation patterns for each integ
 ### AI System Integration
 
 1. Setting Up MCP Client:
+
 ```python
 from mcp.client import Client
 
@@ -40,11 +41,12 @@ async def setup_logic_client():
 ```
 
 2. Implementing Verification:
+
 ```python
 class AIVerifier:
     def __init__(self, mcp_client: Client):
         self.client = mcp_client
-    
+
     async def verify_reasoning(
         self,
         premises: list[str],
@@ -61,6 +63,7 @@ class AIVerifier:
 ```
 
 3. Knowledge Consistency:
+
 ```python
 async def check_consistency(knowledge_base: list[str]) -> bool:
     # Check that knowledge base doesn't imply a contradiction
@@ -74,13 +77,14 @@ async def check_consistency(knowledge_base: list[str]) -> bool:
 ### Knowledge Base Integration
 
 1. Neo4j Setup:
+
 ```python
 from neo4j import GraphDatabase
 
 class TheoremStore:
     def __init__(self, uri: str):
         self.driver = GraphDatabase.driver(uri)
-    
+
     async def store_theorem(self, theorem: Theorem):
         await self.driver.execute_query("""
         MERGE (t:Theorem {
@@ -92,6 +96,7 @@ class TheoremStore:
 ```
 
 2. Proof History:
+
 ```python
 async def track_proof_history(proof: ProofResult):
     await neo4j.execute_query("""
@@ -110,6 +115,7 @@ async def track_proof_history(proof: ProofResult):
 ```
 
 3. Pattern Recognition:
+
 ```python
 async def find_similar_theorems(theorem: Theorem):
     return await neo4j.execute_query("""
@@ -126,6 +132,7 @@ async def find_similar_theorems(theorem: Theorem):
 ### Development Integration
 
 1. Error Handling:
+
 ```python
 class LogicIntegration:
     async def safe_prove(
@@ -150,12 +157,13 @@ class LogicIntegration:
 ```
 
 2. Resource Management:
+
 ```python
 class ProofManager:
     def __init__(self, max_concurrent: int = 4):
         self.semaphore = asyncio.Semaphore(max_concurrent)
         self.active_proofs = set()
-    
+
     async def prove(self, *args, **kwargs):
         async with self.semaphore:
             proof_id = str(uuid.uuid4())
@@ -167,11 +175,12 @@ class ProofManager:
 ```
 
 3. Performance Monitoring:
+
 ```python
 class PerformanceMonitor:
     def __init__(self):
         self.metrics = defaultdict(list)
-    
+
     async def track_operation(
                 'prove',
                 self.prover.prove(
@@ -214,7 +223,7 @@ class ModalLogicVerifier:
             'dia': 'possibility',
             'knows': 'knowledge'
         }
-    
+
     async def verify_modal_statement(
         self,
         modal_premises: List[str],
@@ -224,7 +233,7 @@ class ModalLogicVerifier:
         # Add modal logic axioms based on type
         axioms = self.get_modal_axioms(logic_type)
         all_premises = axioms + modal_premises
-        
+
         return await self.client.call_tool(
             "prove",
             {
@@ -233,14 +242,14 @@ class ModalLogicVerifier:
                 "logic_type": "modal"
             }
         )
-    
+
     def get_modal_axioms(self, logic_type: str) -> List[str]:
         # Basic modal logic axioms
         axioms = [
             "all x (box(x) -> -dia(-x))",  # Duality of box/diamond
             "all x y (box(x -> y) -> (box(x) -> box(y)))"  # K axiom
         ]
-        
+
         if logic_type == 'S4':
             # Add S4 specific axioms
             axioms.extend([
@@ -253,7 +262,7 @@ class ModalLogicVerifier:
                 "all x (box(x) -> x)",  # T axiom
                 "all x (-box(x) -> box(-box(x)))"  # 5 axiom
             ])
-        
+
         return axioms
 ```
 
@@ -343,83 +352,89 @@ class ModalLogicVerifier:
 
 ### Troubleshooting Guide
 
-1. Connection Issues:
-   ```python
-   async def diagnose_connection():
-       try:
-           # Check MCP connection
-           await client.ping()
-           
-           # Verify Prover9 access
-           await prover.test_connection()
-           
-           # Test database access
-           await storage.ping()
-           
-       except Exception as e:
-           logger.error(f"Connection error: {e}")
-           return False
-       return True
-   ```
+1.  Connection Issues:
 
-2. Performance Issues:
-   ```python
-   async def check_performance():
-       metrics = await collect_metrics()
-       
-       # Check proof times
-       if metrics.avg_proof_time > 5.0:
-           logger.warning("High average proof time")
-           
-       # Monitor memory
-       if metrics.memory_usage > 80:
-           logger.warning("High memory usage")
-           
-       # Track success rate
-       if metrics.proof_success_rate < 0.9:
-           logger.warning("Low proof success rate")
-   ```
-
-3. Resource Monitoring:
-   ```python
-   class ResourceMonitor:
-       def __init__(self):
-           self.active_connections = set()
-           self.proof_attempts = 0
-           self.memory_usage = []
-       
-       async def monitor(self):
-           while True:
-               stats = {
-                   "connections": len(self.active_connections),
-                   "proofs": self.proof_attempts,
-                   "memory": sum(self.memory_usage) / len(self.memory_usage)
-               }
-               
-               await log_metrics(stats)
-               await asyncio.sleep(60)
-   ```
-        self,
-        operation_name: str,
-        coroutine: Awaitable[T]
-    ) -> T:
-        start_time = time.time()
+    ```python
+    async def diagnose_connection():
         try:
-            result = await coroutine
-            duration = time.time() - start_time
-            self.metrics[operation_name].append({
-                "duration": duration,
-                "success": True
-            })
-            return result
+            # Check MCP connection
+            await client.ping()
+
+            # Verify Prover9 access
+            await prover.test_connection()
+
+            # Test database access
+            await storage.ping()
+
         except Exception as e:
-            duration = time.time() - start_time
-            self.metrics[operation_name].append({
-                "duration": duration,
-                "success": False,
-                "error": str(e)
-            })
-            raise
+            logger.error(f"Connection error: {e}")
+            return False
+        return True
+    ```
+
+2.  Performance Issues:
+
+    ```python
+    async def check_performance():
+        metrics = await collect_metrics()
+
+        # Check proof times
+        if metrics.avg_proof_time > 5.0:
+            logger.warning("High average proof time")
+
+        # Monitor memory
+        if metrics.memory_usage > 80:
+            logger.warning("High memory usage")
+
+        # Track success rate
+        if metrics.proof_success_rate < 0.9:
+            logger.warning("Low proof success rate")
+    ```
+
+3.  Resource Monitoring:
+
+    ```python
+    class ResourceMonitor:
+        def __init__(self):
+            self.active_connections = set()
+            self.proof_attempts = 0
+            self.memory_usage = []
+
+        async def monitor(self):
+            while True:
+                stats = {
+                    "connections": len(self.active_connections),
+                    "proofs": self.proof_attempts,
+                    "memory": sum(self.memory_usage) / len(self.memory_usage)
+                }
+
+                await log_metrics(stats)
+                await asyncio.sleep(60)
+    ```
+
+         self,
+         operation_name: str,
+         coroutine: Awaitable[T]
+
+    ) -> T:
+    start_time = time.time()
+    try:
+    result = await coroutine
+    duration = time.time() - start_time
+    self.metrics[operation_name].append({
+    "duration": duration,
+    "success": True
+    })
+    return result
+    except Exception as e:
+    duration = time.time() - start_time
+    self.metrics[operation_name].append({
+    "duration": duration,
+    "success": False,
+    "error": str(e)
+    })
+    raise
+
 ```
 [Concrete, detailed steps for implementation and maintenance]
 
@@ -431,3 +446,4 @@ class ModalLogicVerifier:
 
 ## Actionable Advice
 [Gotchas, edge cases, and common pitfalls to avoid]
+```

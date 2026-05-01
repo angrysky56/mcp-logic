@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -31,9 +32,41 @@ from mcp_logic.mace4_wrapper import Mace4Wrapper
 from mcp_logic.syntax_validator import validate_formulas
 from mcp_logic.vfe_engine import abductive_explain
 
-# Set up logging
-logging.basicConfig(level=logging.DEBUG)
+# Set up logging - basic config, will be re-configured in main()
 logger = logging.getLogger("mcp_logic")
+
+# ── Quantifier / FOL patterns for smart routing (CORR-02) ───────────────
+# Match genuine quantifiers: 'all x', 'exists y' — but NOT 'all_students'
+_QUANTIFIER_RE = re.compile(r"\b(all|exists)\s+[a-z]")
+# Match predicate/function calls with arguments: 'p(x)', 'loves(x,y)'
+# Excludes quantifier keywords followed by parentheses (handled above).
+_PREDICATE_CALL_RE = re.compile(r"\b(?!all\b|exists\b)([a-zA-Z_]\w*)\s*\(")
+
+
+def _is_fol_formula(formula: str) -> bool:
+    """Determine whether a formula is first-order logic (vs. propositional).
+
+    A formula is treated as FOL if it contains:
+    - A genuine quantifier (``all x``, ``exists y``) — word boundary +
+      space + lowercase variable, OR
+    - A predicate/function call with arguments (``p(x)``, ``f(a,b)``).
+
+    Predicate-named atoms like ``all_students(x)`` are correctly recognized
+    as predicate calls (FOL) without being confused for quantifiers.
+
+    Pure propositional formulas (``p & q``, ``a -> b``) return False.
+
+    Args:
+        formula: The formula string to classify.
+
+    Returns:
+        True if the formula should be routed to a FOL prover (Prover9).
+    """
+    if _QUANTIFIER_RE.search(formula):
+        return True
+    if _PREDICATE_CALL_RE.search(formula):
+        return True
+    return False
 
 
 class LogicEngine:
@@ -82,59 +115,76 @@ class LogicEngine:
             f.write(input_content)
         return Path(path)
 
-    def _run_prover(self, input_path: Path, timeout: int = 60) -> Dict[str, Any]:
+    async def _run_prover(self, input_path: Path, timeout: int = 60) -> Dict[str, Any]:
         """Run Prover9 directly"""
         try:
             logger.debug("Running Prover9 with input file: %s", input_path)
 
             # Set working directory to Prover9 directory
             cwd = str(self.prover_exe.parent)
-            result = subprocess.run(
-                [str(self.prover_exe), "-f", str(input_path)],
-                capture_output=True,
-                text=True,
-                timeout=timeout,
+
+            # Start the process
+            process = await asyncio.create_subprocess_exec(
+                str(self.prover_exe),
+                "-f",
+                str(input_path),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
                 cwd=cwd,
-                check=False,
             )
 
-            logger.debug("Prover9 stdout:\n%s", result.stdout)
-            if result.stderr:
-                logger.debug("Prover9 stderr:\n%s", result.stderr)
+            try:
+                # Wait for completion with timeout
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(), timeout=timeout
+                )
+                stdout_str = stdout.decode()
+                stderr_str = stderr.decode()
 
-            if "THEOREM PROVED" in result.stdout:
-                proof = result.stdout.split("PROOF =")[1].split("====")[0].strip()
+                logger.debug("Prover9 stdout:\n%s", stdout_str)
+                if stderr_str:
+                    logger.debug("Prover9 stderr:\n%s", stderr_str)
+
+                if "THEOREM PROVED" in stdout_str:
+                    proof = stdout_str.split("PROOF =")[1].split("====")[0].strip()
+                    return {
+                        "result": "proved",
+                        "proof": proof,
+                        "complete_output": stdout_str,
+                    }
+                elif "SEARCH FAILED" in stdout_str:
+                    return {
+                        "result": "unprovable",
+                        "reason": "Proof search failed",
+                        "complete_output": stdout_str,
+                    }
+                elif "Fatal error" in stderr_str:
+                    return {
+                        "result": "error",
+                        "reason": "Syntax error",
+                        "error": stderr_str,
+                    }
+                else:
+                    return {
+                        "result": "error",
+                        "reason": "Unexpected output",
+                        "output": stdout_str,
+                        "error": stderr_str,
+                    }
+
+            except asyncio.TimeoutError:
+                logger.error("Proof search timed out after %d seconds", timeout)
+                try:
+                    process.kill()
+                    await process.wait()
+                except ProcessLookupError:
+                    pass
                 return {
-                    "result": "proved",
-                    "proof": proof,
-                    "complete_output": result.stdout,
+                    "result": "timeout",
+                    "reason": f"Proof search exceeded {timeout} seconds",
                 }
-            elif "SEARCH FAILED" in result.stdout:
-                return {
-                    "result": "unprovable",
-                    "reason": "Proof search failed",
-                    "complete_output": result.stdout,
-                }
-            elif "Fatal error" in result.stderr:
-                return {
-                    "result": "error",
-                    "reason": "Syntax error",
-                    "error": result.stderr,
-                }
-            else:
-                return {
-                    "result": "error",
-                    "reason": "Unexpected output",
-                    "output": result.stdout,
-                    "error": result.stderr,
-                }
-        except subprocess.TimeoutExpired:
-            logger.error("Proof search timed out after %d seconds", timeout)
-            return {
-                "result": "timeout",
-                "reason": f"Proof search exceeded {timeout} seconds",
-            }
-        except (subprocess.SubprocessError, OSError, ValueError) as e:
+
+        except (OSError, ValueError) as e:
             logger.error("Prover error: %s", e)
             return {"result": "error", "reason": str(e)}
         finally:
@@ -144,9 +194,19 @@ class LogicEngine:
                 pass  # Temp file cleanup failed, not critical
 
 
-async def main(prover_path: str):
+async def main(prover_path: str, log_level: str = "INFO"):
     """Start the MCP Logic Server."""
-    logger.info("Starting Logic MCP Server with Prover9/Mace4 at: %s", prover_path)
+    # Configure logging
+    numeric_level = getattr(logging, log_level.upper(), None)
+    if not isinstance(numeric_level, int):
+        numeric_level = logging.INFO
+
+    logging.basicConfig(level=numeric_level, force=True)
+    logger.info(
+        "Starting Logic MCP Server with Prover9/Mace4 at: %s (Log Level: %s)",
+        prover_path,
+        log_level.upper(),
+    )
 
     engine = LogicEngine(prover_path)
     server = Server("logic-manager")
@@ -343,9 +403,9 @@ async def main(prover_path: str):
                         )
                     ]
 
-                # Smart Routing: Check if propositional
-                is_propositional = all(
-                    "all " not in f and "exists " not in f for f in all_formulas
+                # Smart Routing: Check if propositional (CORR-02)
+                is_propositional = not any(
+                    _is_fol_formula(f) for f in all_formulas
                 )
 
                 if is_propositional:
@@ -393,7 +453,7 @@ async def main(prover_path: str):
                 input_file = engine._create_input_file(
                     arguments["premises"], arguments["conclusion"]
                 )
-                results = engine._run_prover(input_file)
+                results = await engine._run_prover(input_file)
                 results["method"] = "Prover9 (FOL)"
                 return [
                     types.TextContent(type="text", text=json.dumps(results, indent=2))
@@ -417,7 +477,9 @@ async def main(prover_path: str):
                     ]
 
                 domain_size = arguments.get("domain_size")
-                result = engine.mace4.find_model(arguments["premises"], domain_size)
+                result = await engine.mace4.find_model(
+                    arguments["premises"], domain_size
+                )
                 return [
                     types.TextContent(type="text", text=json.dumps(result, indent=2))
                 ]
@@ -432,7 +494,7 @@ async def main(prover_path: str):
                     ]
 
                 domain_size = arguments.get("domain_size")
-                result = engine.mace4.find_counterexample(
+                result = await engine.mace4.find_counterexample(
                     arguments["premises"], arguments["conclusion"], domain_size
                 )
                 return [
@@ -580,8 +642,15 @@ def cli():
     parser.add_argument(
         "--prover-path", type=str, required=True, help="Path to Prover9/Mace4 binaries"
     )
+    parser.add_argument(
+        "--log-level",
+        type=str,
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Set the logging level (default: INFO)",
+    )
     args = parser.parse_args()
-    asyncio.run(main(args.prover_path))
+    asyncio.run(main(args.prover_path, args.log_level))
 
 
 if __name__ == "__main__":

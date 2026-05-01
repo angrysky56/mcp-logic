@@ -102,6 +102,7 @@ logger.error("Tool error: %s", e, exc_info=True)  # exc_info=True for stack trac
 ### Subprocess Calls
 
 All subprocess calls follow this pattern:
+
 ```python
 try:
     result = subprocess.run([...], capture_output=True, text=True, timeout=timeout, check=False)
@@ -131,6 +132,7 @@ except (KeyError, ValueError, RuntimeError) as e:
 ### Validation-first Pattern
 
 The `prove` tool validates syntax before running the prover:
+
 ```python
 validation = validate_formulas(all_formulas)
 if not validation["valid"]:
@@ -142,12 +144,14 @@ if not validation["valid"]:
 All tool handlers return `list[types.TextContent]` with `text=json.dumps(result, indent=2)`.
 
 All internal function return dicts with a `"result"` key:
+
 - `"proved"` / `"unprovable"` / `"refuted"` / `"error"` / `"timeout"` / `"syntax_error"` — Prover9
 - `"model_found"` / `"no_model_found"` / `"error"` / `"timeout"` / `"unknown"` — Mace4
 
 ## Binary Path Resolution
 
 Cross-platform pattern (try Linux/Mac binary first, then `.exe`):
+
 ```python
 self.prover_exe = self.prover_path / "prover9.exe"
 if not self.prover_exe.exists():
@@ -159,6 +163,7 @@ if not self.prover_exe.exists():
 ## Trunk Ignore Annotations
 
 `bandit` false-positives for string constants are suppressed with:
+
 ```python
 # trunk-ignore(bandit/B105)
 _TOKEN_VAR = "VAR"

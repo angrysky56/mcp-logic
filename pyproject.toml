@@ -3,10 +3,7 @@ name = "mcp_logic"
 version = "0.1.0"
 description = "MCP server for logical reasoning using Prover9"
 requires-python = ">=3.10"
-dependencies = [
-    "mcp>=1.0.0",
-    "pydantic>=2.0.0"
-]
+dependencies = ["mcp>=1.0.0", "pydantic>=2.0.0", "pytest-asyncio"]
 
 [project.scripts]
 mcp_logic = "mcp_logic.server:cli"

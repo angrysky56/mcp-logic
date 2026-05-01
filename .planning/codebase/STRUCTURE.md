@@ -106,20 +106,20 @@ server.py
 
 ## Key File Locations
 
-| Purpose | File |
-|---|---|
-| MCP server entrypoint | `src/mcp_logic/server.py:cli()` |
-| Tool definitions | `src/mcp_logic/server.py:handle_list_tools()` |
-| Tool handlers | `src/mcp_logic/server.py:handle_call_tool()` |
-| Prover9 logic | `src/mcp_logic/server.py:LogicEngine` |
-| Mace4 logic | `src/mcp_logic/mace4_wrapper.py:Mace4Wrapper` |
-| Propositional parser | `src/mcp_logic/formula_ast.py:parse()` |
-| HCC checker | `src/mcp_logic/hcc_prover.py:check_contingency()` |
-| VFE engine | `src/mcp_logic/vfe_engine.py:abductive_explain()` |
-| Category theory | `src/mcp_logic/categorical_helpers.py:CategoricalHelpers` |
-| Formula validation | `src/mcp_logic/syntax_validator.py:validate_formulas()` |
-| Project config | `pyproject.toml` |
-| Binary path config | CLI arg `--prover-path` (runtime) |
+| Purpose               | File                                                      |
+| --------------------- | --------------------------------------------------------- |
+| MCP server entrypoint | `src/mcp_logic/server.py:cli()`                           |
+| Tool definitions      | `src/mcp_logic/server.py:handle_list_tools()`             |
+| Tool handlers         | `src/mcp_logic/server.py:handle_call_tool()`              |
+| Prover9 logic         | `src/mcp_logic/server.py:LogicEngine`                     |
+| Mace4 logic           | `src/mcp_logic/mace4_wrapper.py:Mace4Wrapper`             |
+| Propositional parser  | `src/mcp_logic/formula_ast.py:parse()`                    |
+| HCC checker           | `src/mcp_logic/hcc_prover.py:check_contingency()`         |
+| VFE engine            | `src/mcp_logic/vfe_engine.py:abductive_explain()`         |
+| Category theory       | `src/mcp_logic/categorical_helpers.py:CategoricalHelpers` |
+| Formula validation    | `src/mcp_logic/syntax_validator.py:validate_formulas()`   |
+| Project config        | `pyproject.toml`                                          |
+| Binary path config    | CLI arg `--prover-path` (runtime)                         |
 
 ## Naming Conventions
 
@@ -133,11 +133,11 @@ server.py
 
 ## Configuration Points
 
-| What | Where |
-|---|---|
-| Prover9/Mace4 binary path | CLI arg `--prover-path` → `LogicEngine.__init__` |
-| Mace4 domain size defaults | `mace4_wrapper.py` lines 62-64 (`domain_size=2`, `end_size=10`) |
-| Subprocess timeout | Hardcoded 60s in `_run_prover()` and `_run_mace4()` |
-| Logging level | `logging.basicConfig(level=logging.DEBUG)` in `server.py` (always DEBUG) |
-| MCP server name | `Server("logic-manager")` in `main()` |
-| pytest paths | `pyproject.toml [tool.pytest.ini_options]` |
+| What                       | Where                                                                    |
+| -------------------------- | ------------------------------------------------------------------------ |
+| Prover9/Mace4 binary path  | CLI arg `--prover-path` → `LogicEngine.__init__`                         |
+| Mace4 domain size defaults | `mace4_wrapper.py` lines 62-64 (`domain_size=2`, `end_size=10`)          |
+| Subprocess timeout         | Hardcoded 60s in `_run_prover()` and `_run_mace4()`                      |
+| Logging level              | `logging.basicConfig(level=logging.DEBUG)` in `server.py` (always DEBUG) |
+| MCP server name            | `Server("logic-manager")` in `main()`                                    |
+| pytest paths               | `pyproject.toml [tool.pytest.ini_options]`                               |

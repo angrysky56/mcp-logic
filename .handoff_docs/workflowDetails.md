@@ -14,7 +14,9 @@ This document outlines the key workflows for effectively utilizing these capabil
 ## Step-by-Step Explanations
 
 ### 1. Server Setup and Configuration
+
 1. Install Dependencies:
+
    ```bash
    pip install mcp-logic
    ```
@@ -30,7 +32,9 @@ This document outlines the key workflows for effectively utilizing these capabil
    ```
 
 ### 2. Proof Workflow
+
 1. Prepare Logical Statements:
+
    ```python
    premises = [
        "all x (P(x) -> Q(x))",
@@ -40,6 +44,7 @@ This document outlines the key workflows for effectively utilizing these capabil
    ```
 
 2. Submit Proof Request:
+
    ```python
    result = prove(premises, conclusion)
    ```
@@ -50,6 +55,7 @@ This document outlines the key workflows for effectively utilizing these capabil
    - Process counterexamples
 
 ### 3. Integration Workflow
+
 1. Knowledge Base Integration:
    - Store proven theorems
    - Track proof dependencies
@@ -63,6 +69,7 @@ This document outlines the key workflows for effectively utilizing these capabil
 ## Annotated Examples
 
 ### 1. Basic Proof Example
+
 ```python
 # Simple modus ponens proof
 from mcp_logic import prove
@@ -83,6 +90,7 @@ else:
 ```
 
 ### 2. Modal Logic Example
+
 ```python
 # Proving necessity distributes over implication
 result = prove(
@@ -93,6 +101,7 @@ result = prove(
 ```
 
 ### 3. Knowledge Base Integration
+
 ```python
 # Store a proven theorem in neo4j
 neo4j.execute_query("""
@@ -106,6 +115,7 @@ neo4j.execute_query("""
 ```
 
 ### 4. Multi-Agent Reasoning
+
 ```python
 # Proving knowledge transfer between agents
 result = prove(
@@ -118,6 +128,7 @@ result = prove(
 ```
 
 ### 5. Error Handling Example
+
 ```python
 try:
     result = prove(premises, conclusion, timeout=30)
@@ -127,11 +138,13 @@ except TimeoutError:
     print("Proof search exceeded time limit")
     model = find_counterexample(premises, conclusion)
 ```
+
 [Code snippets, diagrams, or flowcharts for clarity]
 
 ## Contextual Notes
 
 ### Historical Context
+
 1. Development Motivation:
    - Need for formal verification in AI systems
    - Integration of classical logic with modern AI
@@ -144,6 +157,7 @@ except TimeoutError:
    - Enhanced multi-agent capabilities
 
 ### Current Status
+
 1. Core Features:
    - First-order logic proving
    - Modal logic support
@@ -157,6 +171,7 @@ except TimeoutError:
    - Documentation system
 
 ### Future Directions
+
 1. Planned Enhancements:
    - Extended modal logic operators
    - Temporal logic support
@@ -168,11 +183,12 @@ except TimeoutError:
    - Distributed theorem proving
    - Automated proof strategies
    - Knowledge consistency checking
-[Historical decisions, trade-offs, and anticipated challenges]
+     [Historical decisions, trade-offs, and anticipated challenges]
 
 ## Actionable Advice
 
 ### Best Practices
+
 1. Proof Development:
    - Start with simplified versions of complex proofs
    - Build up complexity gradually
@@ -195,6 +211,7 @@ except TimeoutError:
    - Use counterexamples early
 
 ### Common Pitfalls
+
 1. Syntax Issues:
    - Mismatched parentheses
    - Incorrect operator precedence
@@ -217,6 +234,7 @@ except TimeoutError:
    - Error propagation
 
 ### Maintenance Tips
+
 1. Regular Tasks:
    - Update operator libraries
    - Check integration points
@@ -230,4 +248,4 @@ except TimeoutError:
    - Test with simpler cases
    - Review proof strategy
    - Examine counterexamples
-[Gotchas, edge cases, and common pitfalls to avoid]
+     [Gotchas, edge cases, and common pitfalls to avoid]

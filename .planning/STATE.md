@@ -3,22 +3,25 @@
 ## Current Position
 
 - **Milestone:** v0.3.0 — Hardening & Correctness
-- **Active Phase:** None (initialized, ready to start Phase 1)
-- **Status:** Planning complete
+- **Active Phase:** Phase 5: Cleanup
+- **Status:** Phase 4 Complete
 
 ## Phase Progress
 
-| Phase | Name | Status |
-|---|---|---|
-| 1 | Fix Existing Tests | ⬜ Not started |
-| 2 | CI Pipeline | ⬜ Not started |
-| 3 | Async Runtime Fix | ⬜ Not started |
-| 4 | Correctness Fixes | ⬜ Not started |
-| 5 | Cleanup | ⬜ Not started |
+| Phase | Name               | Status         |
+| ----- | ------------------ | -------------- |
+| 1     | Fix Existing Tests | ✅ Complete    |
+| 2     | CI Pipeline        | ✅ Complete    |
+| 3     | Async Runtime Fix  | ✅ Complete    |
+| 4     | Correctness Fixes  | ✅ Complete    |
+| 5     | Cleanup            | ⬜ In progress |
 
 ## Last Action
 
-2026-05-01: Project initialized. Codebase map in `.planning/codebase/`. All planning artifacts created.
+2026-05-01: Phase 1 complete. Fixed hardcoded Windows paths, added assertions to test_enhancements.py, and implemented --log-level CLI argument. Verified with 100% test pass rate.
+2026-05-01: Phase 2 complete. Implemented GitHub Actions CI workflow (TEST-03), configured Trunk to handle Bandit assertions in tests, baselined linting issues, and added CI status badge to README.
+2026-05-01: Phase 3 complete. Refactored Prover9 and Mace4 execution to non-blocking async subprocesses (RQ-01). Modernized test suite with pytest-asyncio and verified all 84 tests pass.
+2026-05-01: Phase 4 complete. Addressed critical logic correctness issues and verified system stability.
 
 ## Decisions Log
 

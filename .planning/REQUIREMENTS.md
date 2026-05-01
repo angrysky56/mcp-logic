@@ -50,18 +50,18 @@
 
 ## Traceability
 
-| REQ-ID | Phase | Plan |
-|---|---|---|
-| TEST-01 | 1 | — |
-| TEST-02 | 1 | — |
-| RQ-02 | 1 | — |
-| TEST-03 | 2 | — |
-| RQ-01 | 3 | — |
-| CORR-01 | 4 | — |
-| CORR-02 | 4 | — |
-| CORR-03 | 4 | — |
-| CORR-04 | 4 | — |
-| CLEAN-01 | 5 | — |
-| CLEAN-02 | 5 | — |
-| CLEAN-03 | 5 | — |
-| CLEAN-04 | 5 | — |
+| REQ-ID   | Phase | Plan |
+| -------- | ----- | ---- |
+| TEST-01  | 1     | —    |
+| TEST-02  | 1     | —    |
+| RQ-02    | 1     | —    |
+| TEST-03  | 2     | —    |
+| RQ-01    | 3     | —    |
+| CORR-01  | 4     | —    |
+| CORR-02  | 4     | —    |
+| CORR-03  | 4     | —    |
+| CORR-04  | 4     | —    |
+| CLEAN-01 | 5     | —    |
+| CLEAN-02 | 5     | —    |
+| CLEAN-03 | 5     | —    |
+| CLEAN-04 | 5     | —    |

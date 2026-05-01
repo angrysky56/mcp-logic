@@ -27,7 +27,7 @@ class TestVFEEngine:
         # p should definitely win.
         assert res.best_explanation is not None
         assert res.best_explanation.formula_str == "p"
-        assert res.filtered_out_count == 1 # p | ~p filtered out
+        assert res.filtered_out_count == 1  # p | ~p filtered out
 
     def test_complexity_bias(self) -> None:
         # Multiple contingent explanations

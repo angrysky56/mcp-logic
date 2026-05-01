@@ -7,20 +7,20 @@ focus: tech
 
 ## Language & Runtime
 
-| Item | Value |
-|---|---|
-| **Language** | Python 3.10+ (requires-python = ">=3.10") |
-| **Runtime (dev)** | Python 3.13 (`.venv`) |
-| **Runtime (Docker)** | Python 3.12-slim |
-| **Packaging** | `hatchling` (PEP 517 build backend) |
-| **Env management** | `uv` venv (`.venv/`), Docker (`docker-env/`) |
+| Item                 | Value                                        |
+| -------------------- | -------------------------------------------- |
+| **Language**         | Python 3.10+ (requires-python = ">=3.10")    |
+| **Runtime (dev)**    | Python 3.13 (`.venv`)                        |
+| **Runtime (Docker)** | Python 3.12-slim                             |
+| **Packaging**        | `hatchling` (PEP 517 build backend)          |
+| **Env management**   | `uv` venv (`.venv/`), Docker (`docker-env/`) |
 
 ## Core Dependencies
 
-| Package | Version | Role |
-|---|---|---|
-| `mcp` | >=1.0.0 | Model Context Protocol SDK (stdio server + types) |
-| `pydantic` | >=2.0.0 | Data validation (transitively used by `mcp`) |
+| Package    | Version | Role                                              |
+| ---------- | ------- | ------------------------------------------------- |
+| `mcp`      | >=1.0.0 | Model Context Protocol SDK (stdio server + types) |
+| `pydantic` | >=2.0.0 | Data validation (transitively used by `mcp`)      |
 
 > **No other runtime dependencies** in `pyproject.toml`. All logic is implemented in-house.
 
@@ -36,10 +36,10 @@ focus: tech
 
 ## External Binary Dependencies (Not Python)
 
-| Binary | Source | Location |
-|---|---|---|
+| Binary    | Source                       | Location           |
+| --------- | ---------------------------- | ------------------ |
 | `prover9` | LADR (laitep/ladr on GitHub) | `ladr/bin/prover9` |
-| `mace4` | LADR | `ladr/bin/mace4` |
+| `mace4`   | LADR                         | `ladr/bin/mace4`   |
 
 Both are compiled C programs from the Argonne/LADR project. The Python layer wraps them via `subprocess.run()`. The setup scripts (`linux-setup-script.sh`, `windows-setup-mcp-logic.bat`) download and build these automatically from source using CMake.
 
@@ -54,19 +54,19 @@ Both are compiled C programs from the Argonne/LADR project. The Python layer wra
 
 Managed via `.trunk/trunk.yaml` (Trunk v0.1):
 
-| Tool | Version | Purpose |
-|---|---|---|
-| `ruff` | 0.15.12 | Fast Python linter + formatter |
-| `black` | 26.3.1 | Python formatter |
-| `isort` | 8.0.1 | Import sorting |
-| `bandit` | 1.9.4 | Security analysis |
-| `hadolint` | 2.14.0 | Dockerfile linting |
-| `checkov` | 3.2.526 | IaC security scanning |
-| `markdownlint` | 0.48.0 | Markdown style |
-| `yamllint` | 1.38.0 | YAML validation |
-| `trufflehog` | 3.95.2 | Secret scanning |
-| `prettier` | 3.8.3 | General formatter |
-| `shellcheck` / `shfmt` | — | Shell script linting/formatting |
+| Tool                   | Version | Purpose                         |
+| ---------------------- | ------- | ------------------------------- |
+| `ruff`                 | 0.15.12 | Fast Python linter + formatter  |
+| `black`                | 26.3.1  | Python formatter                |
+| `isort`                | 8.0.1   | Import sorting                  |
+| `bandit`               | 1.9.4   | Security analysis               |
+| `hadolint`             | 2.14.0  | Dockerfile linting              |
+| `checkov`              | 3.2.526 | IaC security scanning           |
+| `markdownlint`         | 0.48.0  | Markdown style                  |
+| `yamllint`             | 1.38.0  | YAML validation                 |
+| `trufflehog`           | 3.95.2  | Secret scanning                 |
+| `prettier`             | 3.8.3   | General formatter               |
+| `shellcheck` / `shfmt` | —       | Shell script linting/formatting |
 
 Config file: `.trunk/configs/ruff.toml`
 

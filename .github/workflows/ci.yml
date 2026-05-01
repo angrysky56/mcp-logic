@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.10"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Build LADR
+        run: |
+          cd ladr
+          make all
+
+      - name: Run tests
+        run: |
+          # Ensure LADR binaries are in the path or the server can find them
+          # Based on project docs, it might expect them in ladr/bin/
+          export PATH=$PATH:$(pwd)/ladr/bin
+          uv run pytest --cov=src --cov-report=xml
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trunk Check
+        uses: trunk-io/trunk-action@v1

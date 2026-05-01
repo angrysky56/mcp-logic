@@ -1,6 +1,7 @@
 # TechStack
 
 ## Purpose and Overview
+
 The mcp-logic server provides a critical bridge between modern AI systems and formal logical reasoning capabilities. It integrates Prover9 (an automated theorem prover) and Mace4 (a finite model builder) into the Model Context Protocol framework, enabling:
 
 1. Automated theorem proving for various logical systems:
@@ -17,12 +18,15 @@ The mcp-logic server provides a critical bridge between modern AI systems and fo
 ## Step-by-Step Explanations
 
 ### Setting Up the Environment
+
 1. Install Prover9-Mace4 binaries in a known location
 2. Configure the mcp-logic server with the path to Prover9-Mace4 binaries
 3. Start the server with proper configuration
 
 ### Using the Prover
+
 1. Format logical statements using Prover9 syntax:
+
    ```
    all x (P(x) -> Q(x))  # Universal quantification
    exists x P(x)         # Existential quantification
@@ -33,6 +37,7 @@ The mcp-logic server provides a critical bridge between modern AI systems and fo
    ```
 
 2. Modal Logic Operators:
+
    ```
    box(P)    # Necessity operator
    dia(P)    # Possibility operator
@@ -47,6 +52,7 @@ The mcp-logic server provides a critical bridge between modern AI systems and fo
    ```
 
 ### Using Mace4 for Counterexamples
+
 1. When a proof fails, automatically attempt to find a counterexample
 2. Interpret the model output to understand why the proof failed
 3. Use the counterexample to refine the logical statements
@@ -54,6 +60,7 @@ The mcp-logic server provides a critical bridge between modern AI systems and fo
 ## Annotated Examples
 
 ### Basic First-Order Logic Proof
+
 ```
 # Proving modus ponens
 premises = [
@@ -64,6 +71,7 @@ conclusion = "Q" # Therefore Q is true
 ```
 
 ### Modal Logic Example
+
 ```
 # Proving necessity distributes over implication
 premises = [
@@ -73,6 +81,7 @@ conclusion = "box(P) -> box(Q)"  # Therefore (necessarily P implies necessarily 
 ```
 
 ### Multi-Agent Knowledge
+
 ```
 # Agent A knows what Agent B knows
 premises = [
@@ -83,6 +92,7 @@ conclusion = "P"                  # Therefore P is true
 ```
 
 ### Using Mace4 for Counterexamples
+
 ```
 # Finding a model where transitive closure fails
 clauses = [
@@ -96,6 +106,7 @@ clauses = [
 ## Contextual Notes
 
 ### Design Decisions
+
 1. Integration with Prover9/Mace4:
    - Chosen for its robust support of first-order logic
    - Well-documented input syntax
@@ -108,6 +119,7 @@ clauses = [
    - Support for multiple logical systems through syntax conventions
 
 ### Trade-offs
+
 1. Syntax Restrictions:
    - Must follow Prover9's specific syntax requirements
    - Some advanced logical operators require encoding
@@ -119,6 +131,7 @@ clauses = [
    - Balance between completeness and efficiency
 
 ### Future Developments
+
 1. Planned Extensions:
    - Support for additional logical systems
    - Integration with other theorem provers
@@ -128,6 +141,7 @@ clauses = [
 ## Actionable Advice
 
 ### Common Pitfalls
+
 1. Syntax Issues:
    - Always check operator precedence in complex formulas
    - Avoid using reserved words as variable names
@@ -153,6 +167,7 @@ clauses = [
    - Look for common typos in logical operators
 
 ### Best Practices
+
 1. Documentation:
    - Comment complex logical formulas
    - Document encoding decisions for special operators

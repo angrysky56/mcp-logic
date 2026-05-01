@@ -41,21 +41,25 @@ All 13 issues resolved, verified by a passing test suite and a green CI run.
 ### Active (issues to fix — this milestone)
 
 **Runtime Quality**
+
 - [ ] **RQ-01**: Replace blocking `subprocess.run()` in async tool handlers with `asyncio.create_subprocess_exec()` or thread executor to avoid blocking the event loop
 - [ ] **RQ-02**: Make log level configurable via `--log-level` CLI arg (default `INFO`, not hardcoded `DEBUG`)
 
 **Testing**
+
 - [ ] **TEST-01**: Fix `test_proofs.py` hardcoded Windows binary path — use a pytest fixture or `skipif` for the correct Linux `ladr/bin/` path
 - [ ] **TEST-02**: Add real `assert` statements to `test_enhancements.py` to replace print-only checks
 - [ ] **TEST-03**: Add a GitHub Actions CI workflow that installs LADR, runs `pytest`, and runs `trunk check`
 
 **Correctness**
+
 - [ ] **CORR-01**: Fix Mace4 `_parse_model()` duplicate data bug — properly parse `function()`/`relation()` entries into structured `predicates`/`functions` dicts instead of duplicating into `raw_interpretation`
 - [ ] **CORR-02**: Fix smart-routing heuristic in `server.py` — use the formula AST parser or syntax validator to detect quantifiers structurally instead of fragile string matching
 - [ ] **CORR-03**: Fix `group_axioms()` inconsistency — align identity element `e` treatment with `monoid_axioms()` pattern
 - [ ] **CORR-04**: Improve `syntax_validator.py` quantifier scope detection — handle multi-variable quantifiers and detect missing scope issues
 
 **Cleanup**
+
 - [ ] **CLEAN-01**: Make Mace4 timeout configurable — accept `timeout` param in `find_model()` / `find_counterexample()`
 - [ ] **CLEAN-02**: Remove or document `docker-env/` venv; add to `.gitignore` if unused
 - [ ] **CLEAN-03**: Remove misleading `EXPOSE 8888-8892` from Dockerfile (MCP uses stdio, not TCP)
@@ -72,12 +76,12 @@ All 13 issues resolved, verified by a passing test suite and a green CI run.
 
 ## Key Decisions
 
-| Decision | Rationale | Outcome |
-|---|---|---|
-| Fix all 13 issues in one milestone | They're inter-related; partial fixes leave a fragile codebase | — Pending |
-| Use `asyncio.create_subprocess_exec()` for async fix | Native async; no thread pool overhead | — Pending |
-| Add CI before fixing tests | CI gate makes test fixes verifiable | — Pending |
-| No new features | Stability first; clean foundation before extending | — Active |
+| Decision                                             | Rationale                                                     | Outcome   |
+| ---------------------------------------------------- | ------------------------------------------------------------- | --------- |
+| Fix all 13 issues in one milestone                   | They're inter-related; partial fixes leave a fragile codebase | — Pending |
+| Use `asyncio.create_subprocess_exec()` for async fix | Native async; no thread pool overhead                         | — Pending |
+| Add CI before fixing tests                           | CI gate makes test fixes verifiable                           | — Pending |
+| No new features                                      | Stability first; clean foundation before extending            | — Active  |
 
 ---
 
@@ -86,15 +90,18 @@ All 13 issues resolved, verified by a passing test suite and a green CI run.
 This document evolves at phase transitions and milestone boundaries.
 
 **After each phase transition:**
+
 1. Requirements invalidated? → Move to Out of Scope with reason
 2. Requirements validated? → Move to Validated with phase reference
 3. New requirements emerged? → Add to Active
 4. Decisions to log? → Add to Key Decisions
 
 **After milestone completion:**
+
 1. Full review of all sections
 2. Core Value check — still the right priority?
 3. Update Context with current state
 
 ---
-*Last updated: 2026-05-01 after initialization*
+
+_Last updated: 2026-05-01 after initialization_

@@ -14,21 +14,22 @@ focus: quality
 
 ## Test Files
 
-| File | Lines | Type | Dependencies |
-|---|---|---|---|
-| `tests/test_hcc_prover.py` | 152 | Unit | `mcp_logic.hcc_prover` only |
-| `tests/test_vfe_engine.py` | 97 | Unit | `mcp_logic.vfe_engine` only |
-| `tests/test_formula_ast.py` | ? | Unit | `mcp_logic.formula_ast` only |
-| `tests/test_enhancements.py` | 110 | Integration (no-assert) | `mace4_wrapper`, `syntax_validator`, `categorical_helpers` |
-| `tests/test_proofs.py` | 48 | Integration (Prover9-dependent) | `mcp_logic.server.LogicEngine` |
-| `tests/test_debug.py` | ? | Debug helpers | TBD |
-| `tests/debug_mace4.py` | ? | Manual script | `Mace4Wrapper` |
+| File                         | Lines | Type                            | Dependencies                                               |
+| ---------------------------- | ----- | ------------------------------- | ---------------------------------------------------------- |
+| `tests/test_hcc_prover.py`   | 152   | Unit                            | `mcp_logic.hcc_prover` only                                |
+| `tests/test_vfe_engine.py`   | 97    | Unit                            | `mcp_logic.vfe_engine` only                                |
+| `tests/test_formula_ast.py`  | ?     | Unit                            | `mcp_logic.formula_ast` only                               |
+| `tests/test_enhancements.py` | 110   | Integration (no-assert)         | `mace4_wrapper`, `syntax_validator`, `categorical_helpers` |
+| `tests/test_proofs.py`       | 48    | Integration (Prover9-dependent) | `mcp_logic.server.LogicEngine`                             |
+| `tests/test_debug.py`        | ?     | Debug helpers                   | TBD                                                        |
+| `tests/debug_mace4.py`       | ?     | Manual script                   | `Mace4Wrapper`                                             |
 
 ## Test Coverage
 
 ### Well-Covered (Unit-tested)
 
 **HCC Prover** (`test_hcc_prover.py`) — ~20 test cases:
+
 - Simple contingent formulas: `p`, `p & q`, `p | q`, `~p`
 - Tautology detection: `p | ~p`, `(p & q) | (~p | ~q)`, `(p | ~p) & (q | ~q)`
 - Contradiction detection: `p & ~p`, `(p | q) & (~p & ~q)`
@@ -37,6 +38,7 @@ focus: quality
 - Condition A and Condition B failing cases
 
 **VFE Engine** (`test_vfe_engine.py`) — ~8 test cases:
+
 - Basic abduction with tautology filtering
 - Complexity bias (simpler explanations win)
 - HCC filtering of contradictions
@@ -49,11 +51,13 @@ focus: quality
 ### Lightly Covered
 
 **Integration tests** (`test_enhancements.py`) — No assertions, print-only:
+
 - Mace4 model finding: `find_model(["P(a)"], domain_size=2)` and `find_counterexample(["P(a)"], "P(b)", domain_size=2)`
 - Syntax validator: valid formula, unbalanced parens
 - Categorical helpers: axiom count, commutativity diagram
 
 **Integration tests** (`test_proofs.py`) — Prover9-dependent (hardcoded Windows path):
+
 - `test_socrates_mortality()` — basic syllogism
 - `test_complex_proof()` — multi-premise FOL proof
 - `test_syntax_validation()` — expects error on invalid input

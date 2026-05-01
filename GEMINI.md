@@ -8,19 +8,20 @@
 
 **v0.3.0 — Hardening & Correctness** | 5 phases | 13 requirements
 
-| Phase | Goal | Status |
-|---|---|---|
-| 1 | Fix Existing Tests (TEST-01, TEST-02, RQ-02) | ⬜ Not started |
-| 2 | CI Pipeline (TEST-03) | ⬜ Not started |
-| 3 | Async Runtime Fix (RQ-01) | ⬜ Not started |
-| 4 | Correctness Fixes (CORR-01–04) | ⬜ Not started |
-| 5 | Cleanup (CLEAN-01–04) | ⬜ Not started |
+| Phase | Goal                                         | Status         |
+| ----- | -------------------------------------------- | -------------- |
+| 1     | Fix Existing Tests (TEST-01, TEST-02, RQ-02) | ⬜ Not started |
+| 2     | CI Pipeline (TEST-03)                        | ⬜ Not started |
+| 3     | Async Runtime Fix (RQ-01)                    | ⬜ Not started |
+| 4     | Correctness Fixes (CORR-01–04)               | ⬜ Not started |
+| 5     | Cleanup (CLEAN-01–04)                        | ⬜ Not started |
 
 ## GSD Workflow
 
 This project uses GSD (Get Shit Done) for structured execution.
 
 **Key commands:**
+
 - `/gsd-plan-phase 1` — Plan Phase 1 in detail
 - `/gsd-execute-phase 1` — Execute Phase 1 plans
 - `/gsd-progress` — Check current status
@@ -41,15 +42,15 @@ This project uses GSD (Get Shit Done) for structured execution.
 
 ## Top Known Issues (for context)
 
-| ID | File | Issue |
-|---|---|---|
-| RQ-01 | server.py | Blocking subprocess.run() in async handlers |
-| RQ-02 | server.py | Hardcoded DEBUG log level |
-| TEST-01 | test_proofs.py | Windows path breaks Linux |
-| TEST-02 | test_enhancements.py | No assertions |
-| TEST-03 | (missing) | No CI pipeline |
-| CORR-01 | mace4_wrapper.py | Duplicate data in _parse_model() |
-| CORR-02 | server.py | Fragile string-match smart routing |
+| ID      | File                 | Issue                                       |
+| ------- | -------------------- | ------------------------------------------- |
+| RQ-01   | server.py            | Blocking subprocess.run() in async handlers |
+| RQ-02   | server.py            | Hardcoded DEBUG log level                   |
+| TEST-01 | test_proofs.py       | Windows path breaks Linux                   |
+| TEST-02 | test_enhancements.py | No assertions                               |
+| TEST-03 | (missing)            | No CI pipeline                              |
+| CORR-01 | mace4_wrapper.py     | Duplicate data in \_parse_model()           |
+| CORR-02 | server.py            | Fragile string-match smart routing          |
 
 ## Conventions
 
@@ -61,10 +62,10 @@ This project uses GSD (Get Shit Done) for structured execution.
 
 ## Planning Artifacts
 
-| File | Purpose |
-|---|---|
-| `.planning/PROJECT.md` | Project context and goals |
+| File                        | Purpose                      |
+| --------------------------- | ---------------------------- |
+| `.planning/PROJECT.md`      | Project context and goals    |
 | `.planning/REQUIREMENTS.md` | 13 requirements with REQ-IDs |
-| `.planning/ROADMAP.md` | 5-phase plan |
-| `.planning/STATE.md` | Current progress |
-| `.planning/codebase/` | Architecture map (7 docs) |
+| `.planning/ROADMAP.md`      | 5-phase plan                 |
+| `.planning/STATE.md`        | Current progress             |
+| `.planning/codebase/`       | Architecture map (7 docs)    |

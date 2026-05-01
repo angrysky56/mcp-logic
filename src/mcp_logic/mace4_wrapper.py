@@ -6,9 +6,9 @@ to theorems. It's particularly useful when a proof attempt fails - Mace4 can oft
 find a counterexample showing why the statement isn't universally true.
 """
 
+import asyncio
 import logging
 import os
-import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -91,7 +91,7 @@ class Mace4Wrapper:
             f.write(input_content)
         return Path(path)
 
-    def _run_mace4(self, input_path: Path, timeout: int = 60) -> Dict[str, Any]:
+    async def _run_mace4(self, input_path: Path, timeout: int = 60) -> Dict[str, Any]:
         """Run Mace4 model finder
 
         Args:
@@ -106,57 +106,71 @@ class Mace4Wrapper:
 
             # Set working directory to Mace4 directory
             cwd = str(self.mace4_exe.parent)
-            result = subprocess.run(
-                [str(self.mace4_exe), "-f", str(input_path)],
-                capture_output=True,
-                text=True,
-                timeout=timeout,
+
+            # Start the process
+            process = await asyncio.create_subprocess_exec(
+                str(self.mace4_exe),
+                "-f",
+                str(input_path),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
                 cwd=cwd,
-                check=False,
             )
 
-            logger.debug("Mace4 stdout:\n%s", result.stdout)
-            if result.stderr:
-                logger.debug("Mace4 stderr:\n%s", result.stderr)
+            try:
+                # Wait for completion with timeout
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(), timeout=timeout
+                )
+                stdout_str = stdout.decode()
+                stderr_str = stderr.decode()
 
-            # Parse Mace4 output
-            if "DOMAIN SIZE" in result.stdout and "interpretation(" in result.stdout:
-                # Model found!
-                model = self._parse_model(result.stdout)
+                logger.debug("Mace4 stdout:\n%s", stdout_str)
+                if stderr_str:
+                    logger.debug("Mace4 stderr:\n%s", stderr_str)
+
+                # Parse Mace4 output
+                if "DOMAIN SIZE" in stdout_str and "interpretation(" in stdout_str:
+                    # Model found!
+                    model = self._parse_model(stdout_str)
+                    return {
+                        "result": "model_found",
+                        "model": model,
+                        "complete_output": stdout_str,
+                    }
+                elif "SEARCH FAILED" in stdout_str or "SEARCH TERMINATED" in stdout_str:
+                    return {
+                        "result": "no_model_found",
+                        "reason": "No finite model found within domain size limits",
+                        "complete_output": stdout_str,
+                    }
+                elif "Fatal error" in stderr_str or "Fatal error" in stdout_str:
+                    return {
+                        "result": "error",
+                        "reason": "Syntax error or invalid input",
+                        "error": stderr_str if stderr_str else stdout_str,
+                    }
+                else:
+                    return {
+                        "result": "unknown",
+                        "reason": "Unexpected Mace4 output",
+                        "output": stdout_str,
+                        "error": stderr_str,
+                    }
+
+            except asyncio.TimeoutError:
+                logger.error("Mace4 search timed out after %d seconds", timeout)
+                try:
+                    process.kill()
+                    await process.wait()
+                except ProcessLookupError:
+                    pass
                 return {
-                    "result": "model_found",
-                    "model": model,
-                    "complete_output": result.stdout,
-                }
-            elif (
-                "SEARCH FAILED" in result.stdout or "SEARCH TERMINATED" in result.stdout
-            ):
-                return {
-                    "result": "no_model_found",
-                    "reason": "No finite model found within domain size limits",
-                    "complete_output": result.stdout,
-                }
-            elif "Fatal error" in result.stderr or "Fatal error" in result.stdout:
-                return {
-                    "result": "error",
-                    "reason": "Syntax error or invalid input",
-                    "error": result.stderr if result.stderr else result.stdout,
-                }
-            else:
-                return {
-                    "result": "unknown",
-                    "reason": "Unexpected Mace4 output",
-                    "output": result.stdout,
-                    "error": result.stderr,
+                    "result": "timeout",
+                    "reason": f"Model search exceeded {timeout} seconds",
                 }
 
-        except subprocess.TimeoutExpired:
-            logger.error("Mace4 search timed out after %d seconds", timeout)
-            return {
-                "result": "timeout",
-                "reason": f"Model search exceeded {timeout} seconds",
-            }
-        except (subprocess.SubprocessError, OSError, ValueError) as e:
+        except (OSError, ValueError) as e:
             logger.error("Mace4 error: %s", e)
             return {"result": "error", "reason": str(e)}
         finally:
@@ -166,7 +180,12 @@ class Mace4Wrapper:
                 pass  # Temp file cleanup failed, not critical
 
     def _parse_model(self, output: str) -> Dict[str, Any]:
-        """Parse Mace4 model output into structured format
+        """Parse Mace4 model output into structured format.
+
+        Extracts domain size, predicates (from ``relation()``), functions
+        (from ``function()``), and constants (zero-arity functions) into
+        dedicated dicts.  The ``raw_interpretation`` field contains the
+        full interpretation block exactly once — no duplicate lines.
 
         Args:
             output: Raw Mace4 output
@@ -174,7 +193,7 @@ class Mace4Wrapper:
         Returns:
             Structured model representation
         """
-        model = {
+        model: Dict[str, Any] = {
             "domain_size": None,
             "predicates": {},
             "functions": {},
@@ -186,12 +205,18 @@ class Mace4Wrapper:
         for line in output.split("\n"):
             if "DOMAIN SIZE" in line:
                 try:
-                    size = int(line.split()[-1])
-                    model["domain_size"] = size
+                    parts = line.strip("= ").split()
+                    for i, part in enumerate(parts):
+                        if part == "SIZE" and i + 1 < len(parts):
+                            model["domain_size"] = int(parts[i + 1])
+                            break
+                        if part == "size" and i + 1 < len(parts):
+                            model["domain_size"] = int(parts[i + 1].rstrip("."))
+                            break
                 except (ValueError, IndexError):
-                    pass  # Failed to parse domain size, not critical
+                    pass
 
-        # Extract interpretation block
+        # Extract interpretation block (once — no duplication)
         if "interpretation(" in output:
             start = output.find("interpretation(")
             end = output.find("end_of_list", start)
@@ -199,17 +224,57 @@ class Mace4Wrapper:
                 interpretation = output[start : end + len("end_of_list")]
                 model["raw_interpretation"] = interpretation.strip()
 
-                # Parse individual predicates and functions
-                # This is a simplified parser - full Mace4 output can be complex
-                for line in interpretation.split("\n"):
-                    line = line.strip()
-                    if line.startswith("function(") or line.startswith("relation("):
-                        # Extract name and values
-                        model["raw_interpretation"] += f"\n{line}"
+                # Parse relation() and function() entries into structured dicts
+                self._extract_structured_entries(interpretation, model)
 
         return model
 
-    def find_model(
+    @staticmethod
+    def _extract_structured_entries(
+        interpretation: str, model: Dict[str, Any]
+    ) -> None:
+        """Extract relation/function entries from an interpretation block.
+
+        Populates ``model["predicates"]``, ``model["functions"]``, and
+        ``model["constants"]`` in-place.
+
+        Args:
+            interpretation: The raw ``interpretation(...)`` block text.
+            model: Model dict to populate.
+        """
+        import re
+
+        # Patterns for Mace4 interpretation entries:
+        #   relation(Name(_,...), [ values ])
+        #   function(Name(_,...), [ values ])
+        #   function(Name, [ value ])          (constant — zero-arity)
+        entry_re = re.compile(
+            r"(relation|function)\(\s*"
+            r"([a-zA-Z_][a-zA-Z0-9_]*)"   # name
+            r"(\([^)]*\))?"                # optional arity signature like "(_)" or "(_,_)"
+            r"\s*,\s*\[\s*"
+            r"([^\]]*)"                    # values inside [ ... ]
+            r"\]"
+        )
+
+        for m in entry_re.finditer(interpretation):
+            kind = m.group(1)       # "relation" or "function"
+            name = m.group(2)       # predicate/function name
+            arity_sig = m.group(3)  # e.g. "(_)" or None for constants
+            raw_vals = m.group(4).strip()
+
+            # Parse the comma-separated values
+            values = [v.strip() for v in raw_vals.split(",") if v.strip()] if raw_vals else []
+
+            if kind == "relation":
+                model["predicates"][name] = values
+            elif arity_sig is None or arity_sig.replace(" ", "") == "":
+                # No arity signature → constant (zero-arity function)
+                model["constants"][name] = values
+            else:
+                model["functions"][name] = values
+
+    async def find_model(
         self, premises: List[str], domain_size: Optional[int] = None
     ) -> Dict[str, Any]:
         """Find a model that satisfies the given premises
@@ -224,9 +289,9 @@ class Mace4Wrapper:
         input_file = self._create_input_file(
             premises, goal=None, domain_size=domain_size
         )
-        return self._run_mace4(input_file)
+        return await self._run_mace4(input_file)
 
-    def find_counterexample(
+    async def find_counterexample(
         self, premises: List[str], conclusion: str, domain_size: Optional[int] = None
     ) -> Dict[str, Any]:
         """Find a counterexample showing the conclusion doesn't follow from premises
@@ -245,7 +310,7 @@ class Mace4Wrapper:
         input_file = self._create_input_file(
             premises, goal=conclusion, domain_size=domain_size
         )
-        result = self._run_mace4(input_file)
+        result = await self._run_mace4(input_file)
 
         # If we found a model, it's a counterexample
         if result["result"] == "model_found":

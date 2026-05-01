@@ -1,5 +1,7 @@
 # MCP-Logic
 
+[![CI](https://github.com/angrysky56/mcp-logic/actions/workflows/ci.yml/badge.svg)](https://github.com/angrysky56/mcp-logic/actions/workflows/ci.yml)
+
 An MCP server for automated first-order logic reasoning using Prover9 and Mace4.
 
 ## Features

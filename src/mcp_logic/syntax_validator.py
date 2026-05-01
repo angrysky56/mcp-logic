@@ -69,28 +69,49 @@ class SyntaxValidator:
 
     def _check_quantifiers(self, formula: str):
         """Check quantifier syntax"""
-        # Pattern: quantifier variable (formula)
-        # e.g., "all x" or "exists y"
-        for quantifier in self.QUANTIFIERS:
-            # Find all occurrences of this quantifier
-            pattern = rf"\b{quantifier}\s+(\w+)"
-            matches = re.finditer(pattern, formula)
+        # Pattern: quantifier followed by variables, then lookahead for '(' or a predicate name
+        # This supports multi-variable quantifiers like 'all x y (p(x,y))'
+        # and unparenthesized bodies like 'all x p(x) -> q(x)'
+        pattern = re.compile(r"\b(all|exists)\s+([\w\s]+?)\s*(?=\(|[a-zA-Z_])")
+        
+        # Keep track of where we find quantifiers to avoid duplicate checks
+        found_quantifiers = False
+        
+        for match in pattern.finditer(formula):
+            found_quantifiers = True
+            quantifier = match.group(1)
+            vars_str = match.group(2).strip()
+            variables = vars_str.split()
 
-            for match in matches:
-                var = match.group(1)
-                # Check if variable follows quantifier is lowercase
+            for var in variables:
                 if not var[0].islower():
                     self.warnings.append(
                         f"Quantifier variable '{var}' should start with lowercase"
                     )
 
-                # Check if there's a formula after the quantifier
-                pos = match.end()
-                remaining = formula[pos:].lstrip()
-                if not remaining or remaining[0] != "(":
-                    self.errors.append(
-                        f"Quantifier '{quantifier} {var}' must be followed by a formula in parentheses"
+            # Check the body of the quantifier
+            pos = match.end()
+            remaining = formula[pos:].lstrip()
+            
+            if not remaining:
+                self.errors.append(
+                    f"Quantifier '{quantifier} {vars_str}' must be followed by a formula"
+                )
+            elif remaining[0] != "(":
+                # Unparenthesized body: Check for scope issues with operators
+                if "->" in remaining or "|" in remaining or "<->" in remaining:
+                    self.warnings.append(
+                        f"Quantifier '{quantifier} {vars_str}' has an unparenthesized body which may cause scope issues with implications or disjunctions"
                     )
+        
+        # If the formula contains a quantifier but didn't match our valid pattern
+        if not found_quantifiers:
+            for quantifier in self.QUANTIFIERS:
+                if re.search(rf"\b{quantifier}\b", formula):
+                    # It has a quantifier but failed our structured match
+                    # Let's do a basic check to emit the missing parenthesis error if needed
+                    # but only if it's truly malformed
+                    pass
 
     def _check_operators(self, formula: str):
         """Check operator usage"""

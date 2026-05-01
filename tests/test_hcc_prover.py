@@ -1,7 +1,5 @@
 """Tests for the Hypersequent Contingency Calculus (HCC) prover."""
 
-import pytest
-
 from mcp_logic.hcc_prover import check_contingency, format_hypersequent
 
 
@@ -54,7 +52,7 @@ class TestHCCProver:
         assert res.is_contingent is True
 
     def test_paper_example_4(self) -> None:
-        """ Paper Example 4: ((p & (q | r)) & (r | q)) | p """
+        """Paper Example 4: ((p & (q | r)) & (r | q)) | p"""
         # This formula is contingent.
         # If p is T, the whole thing is T.
         # If p is F, p is F, so it depends on the left side.

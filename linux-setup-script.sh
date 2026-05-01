@@ -8,152 +8,152 @@ NC='\033[0m' # No Color
 
 # Print colorized message
 function print_message() {
-    echo -e "${GREEN}[MCP-LOGIC SETUP]${NC} $1"
+	echo -e "${GREEN}[MCP-LOGIC SETUP]${NC} $1"
 }
 
 function print_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1"
+	echo -e "${YELLOW}[WARNING]${NC} $1"
 }
 
 function print_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
+	echo -e "${RED}[ERROR]${NC} $1"
 }
 
 # Check if dependencies are installed
 function check_dependencies() {
-    print_message "Checking dependencies..."
-    
-    # Check for git
-    if ! command -v git &> /dev/null; then
-        print_error "Git is not installed. Please install it with: sudo apt-get install git"
-        exit 1
-    fi
-    
-    # Check for docker
-    if ! command -v docker &> /dev/null; then
-        print_error "Docker is not installed. Please follow the instructions at https://docs.docker.com/engine/install/"
-        exit 1
-    fi
-    
-    # Check for cmake
-    if ! command -v cmake &> /dev/null; then
-        print_error "CMake is not installed. Please install it with: sudo apt-get install cmake"
-        exit 1
-    fi
-    
-    # Check for build essentials
-    if ! command -v g++ &> /dev/null; then
-        print_error "Build tools are not installed. Please install them with: sudo apt-get install build-essential"
-        exit 1
-    fi
-    
-    print_message "All dependencies are installed."
+	print_message "Checking dependencies..."
+
+	# Check for git
+	if ! command -v git &>/dev/null; then
+		print_error "Git is not installed. Please install it with: sudo apt-get install git"
+		exit 1
+	fi
+
+	# Check for docker
+	if ! command -v docker &>/dev/null; then
+		print_error "Docker is not installed. Please follow the instructions at https://docs.docker.com/engine/install/"
+		exit 1
+	fi
+
+	# Check for cmake
+	if ! command -v cmake &>/dev/null; then
+		print_error "CMake is not installed. Please install it with: sudo apt-get install cmake"
+		exit 1
+	fi
+
+	# Check for build essentials
+	if ! command -v g++ &>/dev/null; then
+		print_error "Build tools are not installed. Please install them with: sudo apt-get install build-essential"
+		exit 1
+	fi
+
+	print_message "All dependencies are installed."
 }
 
 # Clone and build LADR (Prover9)
 function setup_ladr() {
-    print_message "Setting up LADR (Prover9)..."
-    
-    # Get the current directory (MCP-Logic project root)
-    MCP_LOGIC_ROOT="$(pwd)"
-    
-    # Check if LADR directory already exists
-    if [ -d "$MCP_LOGIC_ROOT/ladr" ]; then
-        print_warning "LADR directory already exists at $MCP_LOGIC_ROOT/ladr"
-        read -p "Do you want to remove it and clone again? (y/n) " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            rm -rf "$MCP_LOGIC_ROOT/ladr"
-        else
-            print_message "Using existing LADR directory."
-            return
-        fi
-    fi
-    
-    # Clone the LADR repository
-    print_message "Cloning LADR repository..."
-    git clone https://github.com/laitep/ladr.git "$MCP_LOGIC_ROOT/ladr"
-    
-    # Build LADR
-    print_message "Building LADR..."
-    cd "$MCP_LOGIC_ROOT/ladr" || exit
-    
-    # Check if run_cmake.sh exists
-    if [ -f "./run_cmake.sh" ]; then
-        chmod +x ./run_cmake.sh
-        ./run_cmake.sh
-    else
-        # Manual build if script doesn't exist
-        mkdir -p build
-        cd build || exit
-        cmake ..
-        make
-        make install
-    fi
-    
-    # Check if prover9 was successfully built
-    if [ -f "$MCP_LOGIC_ROOT/ladr/bin/prover9" ]; then
-        print_message "LADR (Prover9) built successfully!"
-        
-        # Create a symlink for Windows compatibility if it doesn't exist
-        if [ ! -f "$MCP_LOGIC_ROOT/ladr/bin/prover9.exe" ]; then
-            ln -s "$MCP_LOGIC_ROOT/ladr/bin/prover9" "$MCP_LOGIC_ROOT/ladr/bin/prover9.exe"
-            print_message "Created prover9.exe symlink for Windows compatibility"
-        fi
-    else
-        print_error "Failed to build LADR (Prover9). Please check the build logs."
-        exit 1
-    fi
-    
-    # Return to the MCP-Logic root directory
-    cd "$MCP_LOGIC_ROOT" || exit
+	print_message "Setting up LADR (Prover9)..."
+
+	# Get the current directory (MCP-Logic project root)
+	MCP_LOGIC_ROOT="$(pwd)"
+
+	# Check if LADR directory already exists
+	if [[ -d "${MCP_LOGIC_ROOT}/ladr" ]]; then
+		print_warning "LADR directory already exists at ${MCP_LOGIC_ROOT}/ladr"
+		read -p "Do you want to remove it and clone again? (y/n) " -n 1 -r
+		echo
+		if [[ ${REPLY} =~ ^[Yy]$ ]]; then
+			rm -rf "${MCP_LOGIC_ROOT}/ladr"
+		else
+			print_message "Using existing LADR directory."
+			return
+		fi
+	fi
+
+	# Clone the LADR repository
+	print_message "Cloning LADR repository..."
+	git clone https://github.com/laitep/ladr.git "${MCP_LOGIC_ROOT}/ladr"
+
+	# Build LADR
+	print_message "Building LADR..."
+	cd "${MCP_LOGIC_ROOT}/ladr" || exit
+
+	# Check if run_cmake.sh exists
+	if [[ -f "./run_cmake.sh" ]]; then
+		chmod +x ./run_cmake.sh
+		./run_cmake.sh
+	else
+		# Manual build if script doesn't exist
+		mkdir -p build
+		cd build || exit
+		cmake ..
+		make
+		make install
+	fi
+
+	# Check if prover9 was successfully built
+	if [[ -f "${MCP_LOGIC_ROOT}/ladr/bin/prover9" ]]; then
+		print_message "LADR (Prover9) built successfully!"
+
+		# Create a symlink for Windows compatibility if it doesn't exist
+		if [[ ! -f "${MCP_LOGIC_ROOT}/ladr/bin/prover9.exe" ]]; then
+			ln -s "${MCP_LOGIC_ROOT}/ladr/bin/prover9" "${MCP_LOGIC_ROOT}/ladr/bin/prover9.exe"
+			print_message "Created prover9.exe symlink for Windows compatibility"
+		fi
+	else
+		print_error "Failed to build LADR (Prover9). Please check the build logs."
+		exit 1
+	fi
+
+	# Return to the MCP-Logic root directory
+	cd "${MCP_LOGIC_ROOT}" || exit
 }
 
 # Setup virtual environment
 function setup_venv() {
-    print_message "Setting up Python virtual environment..."
-    
-    # Get the current directory (MCP-Logic project root)
-    MCP_LOGIC_ROOT="$(pwd)"
-    
-    # Check if virtual environment already exists
-    if [ -d "$MCP_LOGIC_ROOT/.venv" ]; then
-        print_warning "Virtual environment already exists at $MCP_LOGIC_ROOT/.venv"
-        read -p "Do you want to remove it and create a new one? (y/n) " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            rm -rf "$MCP_LOGIC_ROOT/.venv"
-        else
-            print_message "Using existing virtual environment."
-            return
-        fi
-    fi
-    
-    # Create virtual environment
-    print_message "Creating virtual environment..."
-    cd "$MCP_LOGIC_ROOT" || exit
-    pip install uv
-    uv venv
-    
-    # Activate virtual environment and install dependencies
-    print_message "Installing dependencies..."
-    # shellcheck disable=SC1091
-    source "$MCP_LOGIC_ROOT/.venv/bin/activate"
-    uv pip install -e .
-    
-    print_message "Virtual environment setup complete."
+	print_message "Setting up Python virtual environment..."
+
+	# Get the current directory (MCP-Logic project root)
+	MCP_LOGIC_ROOT="$(pwd)"
+
+	# Check if virtual environment already exists
+	if [[ -d "${MCP_LOGIC_ROOT}/.venv" ]]; then
+		print_warning "Virtual environment already exists at ${MCP_LOGIC_ROOT}/.venv"
+		read -p "Do you want to remove it and create a new one? (y/n) " -n 1 -r
+		echo
+		if [[ ${REPLY} =~ ^[Yy]$ ]]; then
+			rm -rf "${MCP_LOGIC_ROOT}/.venv"
+		else
+			print_message "Using existing virtual environment."
+			return
+		fi
+	fi
+
+	# Create virtual environment
+	print_message "Creating virtual environment..."
+	cd "${MCP_LOGIC_ROOT}" || exit
+	pip install uv
+	uv venv
+
+	# Activate virtual environment and install dependencies
+	print_message "Installing dependencies..."
+	# shellcheck disable=SC1091
+	source "${MCP_LOGIC_ROOT}/.venv/bin/activate"
+	uv pip install -e .
+
+	print_message "Virtual environment setup complete."
 }
 
 # Create Docker files
 function create_docker_files() {
-    print_message "Creating Docker files..."
-    
-    # Get the current directory (MCP-Logic project root)
-    MCP_LOGIC_ROOT="$(pwd)"
-    LADR_BIN_PATH="$MCP_LOGIC_ROOT/ladr/bin"
-    
-    # Create Dockerfile
-    cat > "$MCP_LOGIC_ROOT/Dockerfile" << EOF
+	print_message "Creating Docker files..."
+
+	# Get the current directory (MCP-Logic project root)
+	MCP_LOGIC_ROOT="$(pwd)"
+	LADR_BIN_PATH="${MCP_LOGIC_ROOT}/ladr/bin"
+
+	# Create Dockerfile
+	cat >"${MCP_LOGIC_ROOT}/Dockerfile" <<EOF
 # Dockerfile for mcp-logic with Prover9
 FROM python:3.12-slim
 
@@ -201,9 +201,9 @@ EXPOSE 8888 8889 8890 8891 8892
 # Command to run the server
 CMD ["sh", "-c", "uv --directory /app/src/mcp_logic run mcp_logic --prover-path /usr/local/prover9-mount"]
 EOF
-    
-    # Create Linux run script
-    cat > "$MCP_LOGIC_ROOT/run-mcp-logic.sh" << EOF
+
+	# Create Linux run script
+	cat >"${MCP_LOGIC_ROOT}/run-mcp-logic.sh" <<EOF
 #!/bin/bash
 
 # Port selection - try several ports in case some are in use
@@ -224,7 +224,7 @@ if [ \$PORT -eq 0 ]; then
 fi
 
 # Path to local Prover9 installation
-PROVER9_PATH="$LADR_BIN_PATH"
+PROVER9_PATH="${LADR_BIN_PATH}"
 
 # Show info
 echo "Using port \$PORT"
@@ -252,9 +252,9 @@ else
   echo "Build failed. Check the logs above for details."
 fi
 EOF
-    
-    # Create Windows run script
-    cat > "$MCP_LOGIC_ROOT/run-mcp-logic.bat" << EOF
+
+	# Create Windows run script
+	cat >"${MCP_LOGIC_ROOT}/run-mcp-logic.bat" <<EOF
 @echo off
 setlocal EnableDelayedExpansion
 
@@ -302,9 +302,9 @@ if %ERRORLEVEL% EQU 0 (
   echo Build failed. Check the logs above for details.
 )
 EOF
-    
-    # Create local run script (non-Docker)
-    cat > "$MCP_LOGIC_ROOT/run-mcp-logic-local.sh" << EOF
+
+	# Create local run script (non-Docker)
+	cat >"${MCP_LOGIC_ROOT}/run-mcp-logic-local.sh" <<EOF
 #!/bin/bash
 
 # Port selection - try several ports in case some are in use
@@ -325,7 +325,7 @@ if [ \$PORT -eq 0 ]; then
 fi
 
 # Project and Prover9 paths
-PROJECT_PATH="$MCP_LOGIC_ROOT"
+PROJECT_PATH="${MCP_LOGIC_ROOT}"
 PROVER9_PATH="\$PROJECT_PATH/ladr/bin"
 
 # Show info
@@ -349,52 +349,52 @@ echo "Starting MCP-Logic server..."
 cd "\$PROJECT_PATH"
 uv --directory "\$PROJECT_PATH/src/mcp_logic" run mcp_logic --prover-path "\$PROVER9_PATH"
 EOF
-    
-    # Create Claude app config for direct non-Docker use
-    cat > "$MCP_LOGIC_ROOT/claude-app-config.json" << EOF
+
+	# Create Claude app config for direct non-Docker use
+	cat >"${MCP_LOGIC_ROOT}/claude-app-config.json" <<EOF
 {
   "mcpServers": {
     "mcp-logic": {
       "command": "uv",
       "args": [
         "--directory", 
-        "$MCP_LOGIC_ROOT/src/mcp_logic",
+        "${MCP_LOGIC_ROOT}/src/mcp_logic",
         "run", 
         "mcp_logic", 
         "--prover-path", 
-        "$MCP_LOGIC_ROOT/ladr/bin"
+        "${MCP_LOGIC_ROOT}/ladr/bin"
       ]
     }
   }
 }
 EOF
-    
-    # Make the run scripts executable
-    chmod +x "$MCP_LOGIC_ROOT/run-mcp-logic.sh"
-    chmod +x "$MCP_LOGIC_ROOT/run-mcp-logic-local.sh"
-    
-    print_message "Configuration files created successfully!"
+
+	# Make the run scripts executable
+	chmod +x "${MCP_LOGIC_ROOT}/run-mcp-logic.sh"
+	chmod +x "${MCP_LOGIC_ROOT}/run-mcp-logic-local.sh"
+
+	print_message "Configuration files created successfully!"
 }
 
 # Main setup function
 function setup() {
-    print_message "Starting MCP-Logic setup..."
-    
-    # Check dependencies
-    check_dependencies
-    
-    # Setup LADR (Prover9)
-    setup_ladr
-    
-    # Setup virtual environment
-    setup_venv
-    
-    # Create Docker files
-    create_docker_files
-    
-    print_message "Setup completed successfully!"
-    print_message "To run the MCP-Logic server with Docker, use: ./run-mcp-logic.sh"
-    print_message "For Claude Desktop integration, use the configuration in claude-app-config.json"
+	print_message "Starting MCP-Logic setup..."
+
+	# Check dependencies
+	check_dependencies
+
+	# Setup LADR (Prover9)
+	setup_ladr
+
+	# Setup virtual environment
+	setup_venv
+
+	# Create Docker files
+	create_docker_files
+
+	print_message "Setup completed successfully!"
+	print_message "To run the MCP-Logic server with Docker, use: ./run-mcp-logic.sh"
+	print_message "For Claude Desktop integration, use the configuration in claude-app-config.json"
 }
 
 # Run the setup

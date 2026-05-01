@@ -165,8 +165,8 @@ def monoid_axioms() -> List[str]:
         "all x all y exists z (mult(x,y,z))",
         # Associativity
         "all x all y all z all xy all yz all xyz all ybc ((mult(x,y,xy) & mult(y,z,yz) & mult(xy,z,xyz) & mult(x,yz,xyz2)) -> xyz = xyz2)",
-        # Identity exists
-        "exists e (all x (mult(e,x,x) & mult(x,e,x)))",
+        # Identity exists (e is a constant)
+        "all x (mult(e,x,x) & mult(x,e,x))",
     ]
 
 

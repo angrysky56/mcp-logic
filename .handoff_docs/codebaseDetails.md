@@ -27,13 +27,14 @@ The MCP Logic codebase implements a bridge between the Model Context Protocol (M
    - Proof caching
    - Result persistence
    - Integration APIs
-[Why this domain is critical to the project]
+     [Why this domain is critical to the project]
 
 ## Step-by-Step Explanations
 
 ### Core Components Implementation
 
 1. Server Setup:
+
 ```python
 class LogicServer(Server):
     def __init__(self, prover_path: str):
@@ -43,6 +44,7 @@ class LogicServer(Server):
 ```
 
 2. Request Handler:
+
 ```python
 @server.call_tool()
 async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[types.Content]:
@@ -53,28 +55,30 @@ async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[types.C
 ```
 
 3. Proof Processing:
+
 ```python
 async def handle_prove(args: dict) -> list[types.Content]:
     premises = args["premises"]
     conclusion = args["conclusion"]
-    
+
     # Format for Prover9
     input_str = format_proof_input(premises, conclusion)
-    
+
     # Run proof search
     result = await self.prover.prove(input_str)
-    
+
     if not result.success:
         # Try counterexample
         model = await self.mace4.find_model(input_str)
         return format_counterexample(model)
-        
+
     return format_proof(result)
 ```
 
 ### Integration Implementation
 
 1. Neo4j Connection:
+
 ```python
 async def store_theorem(proof_result: ProofResult) -> None:
     query = """
@@ -92,12 +96,13 @@ async def store_theorem(proof_result: ProofResult) -> None:
 ```
 
 2. Resource Management:
+
 ```python
 class ProverProcess:
     def __init__(self, timeout: int = 30):
         self.timeout = timeout
         self.process = None
-    
+
     async def run(self, input_str: str) -> str:
         self.process = await asyncio.create_subprocess_exec(
             self.prover_path,
@@ -118,6 +123,7 @@ class ProverProcess:
 ### Error Handling Implementation
 
 1. Syntax Validation:
+
 ```python
 def validate_formula(formula: str) -> bool:
     try:
@@ -129,6 +135,7 @@ def validate_formula(formula: str) -> bool:
 ```
 
 2. Error Response:
+
 ```python
 def format_error(error: Exception) -> list[types.Content]:
     return [types.TextContent(
@@ -136,6 +143,7 @@ def format_error(error: Exception) -> list[types.Content]:
         text=f"Error: {str(error)}"
     )]
 ```
+
 [Concrete, detailed steps for implementation and maintenance]
 
 ## Annotated Examples
@@ -164,7 +172,7 @@ async def prove_with_explanation(
             "max_proofs": 1
         }
     )
-    
+
     # Attempt proof
     try:
         result = await server.prover.prove(input_str)
@@ -200,13 +208,13 @@ def format_modal_proof(
         all x y (box(x & y) <-> box(x) & box(y)).
     end_of_list.
     """
-    
+
     # Format premises with modal operators
     formatted_premises = [
         format_modal_formula(p)
         for p in premises
     ]
-    
+
     return f"{preamble}\n" + "\n".join(formatted_premises)
 ```
 
@@ -217,7 +225,7 @@ def format_modal_proof(
 class TheoremStore:
     def __init__(self, neo4j_uri: str):
         self.driver = GraphDatabase.driver(neo4j_uri)
-    
+
     async def store_proof(
         self,
         proof: ProofResult
@@ -241,6 +249,7 @@ class TheoremStore:
             "steps": proof.steps
         })
 ```
+
 [Code snippets, diagrams, or flowcharts for clarity]
 
 ## Contextual Notes
@@ -304,13 +313,14 @@ class TheoremStore:
    - Database connection limits
    - Memory constraints
    - Network bandwidth
-[Historical decisions, trade-offs, and anticipated challenges]
+     [Historical decisions, trade-offs, and anticipated challenges]
 
 ## Actionable Advice
 
 ### Development Guidelines
 
 1. Code Organization:
+
 ```python
 # Maintain clear module separation
 from mcp_logic import (
@@ -333,13 +343,13 @@ async def prove(
 def format_modal_formula(formula: str) -> str:
     """
     Format a modal logic formula for Prover9.
-    
+
     Args:
         formula: Raw modal logic formula
-        
+
     Returns:
         Formatted Prover9 input string
-        
+
     Raises:
         SyntaxError: If formula is malformed
     """
@@ -347,6 +357,7 @@ def format_modal_formula(formula: str) -> str:
 ```
 
 2. Error Handling:
+
 ```python
 # Use custom exceptions
 class ProverError(Exception):
@@ -373,6 +384,7 @@ except Exception as e:
 ```
 
 3. Testing Strategy:
+
 ```python
 # Unit tests for core functionality
 def test_modal_formula_formatting():
@@ -394,13 +406,14 @@ async def test_proof_workflow():
 ### Performance Optimization
 
 1. Process Management:
+
 ```python
 # Use process pools for concurrent proofs
 class ProverPool:
     def __init__(self, max_workers: int = 4):
         self.semaphore = asyncio.Semaphore(max_workers)
         self.workers = []
-    
+
     async def prove(self, input_str: str) -> ProofResult:
         async with self.semaphore:
             worker = ProverProcess()
@@ -412,16 +425,17 @@ class ProverPool:
 ```
 
 2. Memory Management:
+
 ```python
 # Implement clean resource handling
 class ProverProcess:
     async def __aenter__(self):
         await self.start()
         return self
-    
+
     async def __aexit__(self, exc_type, exc, tb):
         await self.cleanup()
-    
+
     async def cleanup(self):
         if self.process:
             try:
@@ -434,19 +448,20 @@ class ProverProcess:
 ### Maintenance Tasks
 
 1. Regular Checks:
+
 ```python
 # Health check implementation
 async def check_system_health() -> bool:
     try:
         # Test prover availability
         await self.prover.test_connection()
-        
+
         # Check database connection
         await self.storage.ping()
-        
+
         # Verify process pool
         assert len(self.pool.workers) <= self.pool.max_workers
-        
+
         return True
     except Exception as e:
         logger.error(f"Health check failed: {e}")
@@ -454,6 +469,7 @@ async def check_system_health() -> bool:
 ```
 
 2. Monitoring:
+
 ```python
 # Performance metrics
 class ProverMetrics:
@@ -461,7 +477,7 @@ class ProverMetrics:
         self.proof_times = []
         self.success_rate = 0.0
         self.memory_usage = []
-    
+
     def record_proof_attempt(
         self,
         success: bool,
@@ -484,4 +500,5 @@ async def monitor_system():
             logger.warning("High memory usage detected")
         await asyncio.sleep(300)
 ```
+
 [Gotchas, edge cases, and common pitfalls to avoid]

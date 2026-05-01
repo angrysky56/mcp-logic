@@ -12,6 +12,7 @@ focus: tech
 - **What**: First-order logic resolution prover from the LADR library by William McCune
 - **How**: `subprocess.run([str(self.prover_exe), "-f", str(input_path)])`, stdout parsed for `"THEOREM PROVED"` / `"SEARCH FAILED"` / `"Fatal error"`
 - **Input format**: Prover9 `.in` file format (TPTP-like):
+
   ```
   formulas(assumptions).
     all x (man(x) -> mortal(x)).
@@ -22,6 +23,7 @@ focus: tech
     mortal(socrates).
   end_of_list.
   ```
+
 - **Binary path**: Resolved at startup from `--prover-path` CLI arg → `{path}/prover9` or `{path}/prover9.exe`
 - **CWD**: Set to the binary's parent directory during subprocess call
 - **Timeout**: 60 seconds hardcoded
@@ -57,20 +59,21 @@ focus: tech
 
 ### 8 Exposed MCP Tools
 
-| Tool Name | Handler Location | External Call |
-|---|---|---|
-| `prove` | `server.py:handle_call_tool` | Prover9 or HCC (propositional routing) |
-| `check_well_formed` | `server.py:handle_call_tool` | None (pure Python) |
-| `find_model` | `server.py:handle_call_tool` | Mace4 |
-| `find_counterexample` | `server.py:handle_call_tool` | Mace4 |
-| `verify_commutativity` | `server.py:handle_call_tool` | None (returns FOL for `prove`) |
-| `get_category_axioms` | `server.py:handle_call_tool` | None (pure Python) |
-| `check_contingency` | `server.py:handle_call_tool` | None (HCC pure Python) |
-| `abductive_explain` | `server.py:handle_call_tool` | None (VFE pure Python) |
+| Tool Name              | Handler Location             | External Call                          |
+| ---------------------- | ---------------------------- | -------------------------------------- |
+| `prove`                | `server.py:handle_call_tool` | Prover9 or HCC (propositional routing) |
+| `check_well_formed`    | `server.py:handle_call_tool` | None (pure Python)                     |
+| `find_model`           | `server.py:handle_call_tool` | Mace4                                  |
+| `find_counterexample`  | `server.py:handle_call_tool` | Mace4                                  |
+| `verify_commutativity` | `server.py:handle_call_tool` | None (returns FOL for `prove`)         |
+| `get_category_axioms`  | `server.py:handle_call_tool` | None (pure Python)                     |
+| `check_contingency`    | `server.py:handle_call_tool` | None (HCC pure Python)                 |
+| `abductive_explain`    | `server.py:handle_call_tool` | None (VFE pure Python)                 |
 
 ## No External HTTP/API Integrations
 
 There are **no HTTP clients, no REST APIs, no cloud services, no databases** in this project. All logic is either:
+
 1. Delegated to local LADR binaries (Prover9/Mace4)
 2. Implemented in pure Python (HCC, VFE, AST, Syntax validation)
 
