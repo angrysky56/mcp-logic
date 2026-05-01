@@ -27,7 +27,7 @@ build/
 
 # Project specific
 test.in
-*.lock
+# *.lock (Track uv.lock for CI caching)
 
 docker-env/
 ladr/

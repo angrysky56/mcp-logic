@@ -73,10 +73,10 @@ class SyntaxValidator:
         # This supports multi-variable quantifiers like 'all x y (p(x,y))'
         # and unparenthesized bodies like 'all x p(x) -> q(x)'
         pattern = re.compile(r"\b(all|exists)\s+([\w\s]+?)\s*(?=\(|[a-zA-Z_])")
-        
+
         # Keep track of where we find quantifiers to avoid duplicate checks
         found_quantifiers = False
-        
+
         for match in pattern.finditer(formula):
             found_quantifiers = True
             quantifier = match.group(1)
@@ -92,7 +92,7 @@ class SyntaxValidator:
             # Check the body of the quantifier
             pos = match.end()
             remaining = formula[pos:].lstrip()
-            
+
             if not remaining:
                 self.errors.append(
                     f"Quantifier '{quantifier} {vars_str}' must be followed by a formula"
@@ -103,7 +103,7 @@ class SyntaxValidator:
                     self.warnings.append(
                         f"Quantifier '{quantifier} {vars_str}' has an unparenthesized body which may cause scope issues with implications or disjunctions"
                     )
-        
+
         # If the formula contains a quantifier but didn't match our valid pattern
         if not found_quantifiers:
             for quantifier in self.QUANTIFIERS:

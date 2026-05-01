@@ -1,7 +1,5 @@
 """Tests for the VFE Engine abduction logic."""
 
-import math
-
 import pytest
 
 from mcp_logic.vfe_engine import abductive_explain

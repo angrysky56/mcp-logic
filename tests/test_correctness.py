@@ -7,12 +7,8 @@ These tests verify:
 - CORR-04: Syntax validator multi-variable quantifiers and scope warnings
 """
 
-import re
-
-import pytest
-
 from mcp_logic.categorical_helpers import group_axioms, monoid_axioms
-from mcp_logic.syntax_validator import SyntaxValidator, validate_formulas
+from mcp_logic.syntax_validator import SyntaxValidator
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -61,19 +57,24 @@ end_of_list.
     def test_predicates_populated(self):
         wrapper = self._get_wrapper()
         model = wrapper._parse_model(self.SAMPLE_MACE4_OUTPUT)
-        assert "P" in model["predicates"], f"Expected 'P' in predicates, got {model['predicates']}"
+        assert (
+            "P" in model["predicates"]
+        ), f"Expected 'P' in predicates, got {model['predicates']}"
 
     def test_functions_populated(self):
         wrapper = self._get_wrapper()
         model = wrapper._parse_model(self.SAMPLE_MACE4_OUTPUT)
-        assert "f" in model["functions"], f"Expected 'f' in functions, got {model['functions']}"
+        assert (
+            "f" in model["functions"]
+        ), f"Expected 'f' in functions, got {model['functions']}"
 
     def test_constants_populated(self):
         wrapper = self._get_wrapper()
         model = wrapper._parse_model(self.SAMPLE_MACE4_OUTPUT)
         # 'e' is a 0-arity function (constant)
-        assert "e" in model["constants"] or "e" in model["functions"], \
-            f"Expected 'e' in constants or functions, got constants={model['constants']}, functions={model['functions']}"
+        assert (
+            "e" in model["constants"] or "e" in model["functions"]
+        ), f"Expected 'e' in constants or functions, got constants={model['constants']}, functions={model['functions']}"
 
     def test_raw_interpretation_no_duplicates(self):
         wrapper = self._get_wrapper()
@@ -157,16 +158,16 @@ class TestGroupAxiomsConsistency:
         """monoid_axioms() should assert the existence of identity element e."""
         axioms = monoid_axioms()
         combined = " ".join(axioms)
-        assert "mult(e," in combined or "mult( e," in combined, \
-            "monoid_axioms must reference identity element 'e'"
+        assert (
+            "mult(e," in combined or "mult( e," in combined
+        ), "monoid_axioms must reference identity element 'e'"
 
     def test_group_includes_monoid_axioms(self):
         """group_axioms() should be a superset of monoid_axioms()."""
         m_axioms = monoid_axioms()
         g_axioms = group_axioms()
         for axiom in m_axioms:
-            assert axiom in g_axioms, \
-                f"group_axioms() missing monoid axiom: {axiom}"
+            assert axiom in g_axioms, f"group_axioms() missing monoid axiom: {axiom}"
 
     def test_group_inverse_uses_consistent_e(self):
         """group_axioms() inverse axiom should reference the same identity element 'e'."""
@@ -181,12 +182,14 @@ class TestGroupAxiomsConsistency:
         """The monoid identity axiom should use 'all x' with 'e' as a constant."""
         axioms = monoid_axioms()
         identity_axioms = [a for a in axioms if "mult(e," in a or "mult(x,e," in a]
-        assert len(identity_axioms) >= 1, \
-            "monoid_axioms must have at least one identity axiom with 'e' as constant"
+        assert (
+            len(identity_axioms) >= 1
+        ), "monoid_axioms must have at least one identity axiom with 'e' as constant"
         # 'e' should appear as a constant (not existentially quantified in the same axiom)
         for ax in identity_axioms:
-            assert "all x" in ax, \
-                f"Identity axiom should universally quantify over x: {ax}"
+            assert (
+                "all x" in ax
+            ), f"Identity axiom should universally quantify over x: {ax}"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -201,13 +204,17 @@ class TestValidatorMultiVariable:
         """'all x y (p(x,y))' should be accepted as valid."""
         validator = SyntaxValidator()
         is_valid, errors, warnings = validator.validate("all x y (p(x,y))")
-        assert is_valid, f"Multi-variable quantifier should be valid, got errors: {errors}"
+        assert (
+            is_valid
+        ), f"Multi-variable quantifier should be valid, got errors: {errors}"
 
     def test_single_variable_still_valid(self):
         """'all x (p(x))' should remain valid."""
         validator = SyntaxValidator()
         is_valid, errors, warnings = validator.validate("all x (p(x))")
-        assert is_valid, f"Single-variable quantifier should be valid, got errors: {errors}"
+        assert (
+            is_valid
+        ), f"Single-variable quantifier should be valid, got errors: {errors}"
 
     def test_exists_multi_variable(self):
         """'exists x y (q(x,y))' should be accepted."""
@@ -225,21 +232,24 @@ class TestValidatorScopeWarning:
         is_valid, errors, warnings = validator.validate("all x p(x) -> q(x)")
         # Should produce at least a warning about scope
         scope_warnings = [w for w in warnings if "scope" in w.lower()]
-        assert len(scope_warnings) >= 1, \
-            f"Expected scope warning for unparenthesized quantifier body, got warnings: {warnings}"
+        assert (
+            len(scope_warnings) >= 1
+        ), f"Expected scope warning for unparenthesized quantifier body, got warnings: {warnings}"
 
     def test_scope_warning_disjunction(self):
         """'all x p(x) | q(x)' should produce a scope warning."""
         validator = SyntaxValidator()
         is_valid, errors, warnings = validator.validate("all x p(x) | q(x)")
         scope_warnings = [w for w in warnings if "scope" in w.lower()]
-        assert len(scope_warnings) >= 1, \
-            f"Expected scope warning for unparenthesized quantifier body, got warnings: {warnings}"
+        assert (
+            len(scope_warnings) >= 1
+        ), f"Expected scope warning for unparenthesized quantifier body, got warnings: {warnings}"
 
     def test_no_scope_warning_when_parenthesized(self):
         """'all x (p(x) -> q(x))' should NOT produce a scope warning."""
         validator = SyntaxValidator()
         is_valid, errors, warnings = validator.validate("all x (p(x) -> q(x))")
         scope_warnings = [w for w in warnings if "scope" in w.lower()]
-        assert len(scope_warnings) == 0, \
-            f"Should not warn when quantifier body is parenthesized, got: {scope_warnings}"
+        assert (
+            len(scope_warnings) == 0
+        ), f"Should not warn when quantifier body is parenthesized, got: {scope_warnings}"

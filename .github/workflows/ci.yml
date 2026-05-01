@@ -23,6 +23,12 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
+      - name: Clone LADR
+        run: |
+          if [ ! -d "ladr" ]; then
+            git clone https://github.com/laitep/ladr.git ladr
+          fi
+
       - name: Build LADR
         run: |
           cd ladr
