@@ -19,6 +19,4 @@ packages = ["src/mcp_logic"]
 testpaths = ["tests"]
 
 [dependency-groups]
-dev = [
-    "pytest-cov>=7.1.0",
-]
+dev = ["pytest-cov>=7.1.0"]
