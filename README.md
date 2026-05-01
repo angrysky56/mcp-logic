@@ -168,6 +168,7 @@ mcp-logic/
 - ✅ **Hypersequent Contingency Calculus (HCC):** Added a rigorous deductive checker for evaluating propositional formula contingencies instantly without brute-force modeling.
 - ✅ **Variational Free Energy (VFE) Engine:** Implemented abductive reasoning that ranks hypotheses using a non-dogmatic Cournot-Gaifman prior to elegantly satisfy Ockham's Razor.
 - ✅ **Smart Prover Routing:** `prove` tool automatically routes pure propositional queries to the HCC engine, and first-order queries to Prover9.
+- ✅ **Configurable Model Finder:** `find_model` and `find_counterexample` now support custom timeouts and structured predicate/function extraction.
 
 ## What's New in v0.2.0
 

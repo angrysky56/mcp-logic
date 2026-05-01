@@ -43,6 +43,7 @@ class Mace4Wrapper:
         premises: List[str],
         goal: Optional[str] = None,
         domain_size: Optional[int] = None,
+        timeout: int = 60,
     ) -> Path:
         """Create a Mace4 input file
 
@@ -50,6 +51,7 @@ class Mace4Wrapper:
             premises: List of logical premises (assumptions)
             goal: Goal to disprove (for counterexamples). If None, find any model.
             domain_size: Maximum domain size to search. If None, Mace4 will increment.
+            timeout: Maximum search time in seconds.
 
         Returns:
             Path to created input file
@@ -64,7 +66,7 @@ class Mace4Wrapper:
             content.append("assign(end_size, 10).")  # Try up to size 10
 
         # Timeout
-        content.append("assign(max_seconds, 60).")
+        content.append(f"assign(max_seconds, {timeout}).")
         content.append("")
 
         # Premises (assumptions)
@@ -118,9 +120,9 @@ class Mace4Wrapper:
             )
 
             try:
-                # Wait for completion with timeout
+                # Wait for completion with timeout (add 1s buffer for Mace4's internal timeout)
                 stdout, stderr = await asyncio.wait_for(
-                    process.communicate(), timeout=timeout
+                    process.communicate(), timeout=timeout + 1
                 )
                 stdout_str = stdout.decode()
                 stderr_str = stderr.decode()
@@ -142,6 +144,12 @@ class Mace4Wrapper:
                     return {
                         "result": "no_model_found",
                         "reason": "No finite model found within domain size limits",
+                        "complete_output": stdout_str,
+                    }
+                elif "max_sec" in stdout_str or "max_sec" in stderr_str:
+                    return {
+                        "result": "timeout",
+                        "reason": f"Model search exceeded {timeout} seconds (Mace4 internal timeout)",
                         "complete_output": stdout_str,
                     }
                 elif "Fatal error" in stderr_str or "Fatal error" in stdout_str:
@@ -230,9 +238,7 @@ class Mace4Wrapper:
         return model
 
     @staticmethod
-    def _extract_structured_entries(
-        interpretation: str, model: Dict[str, Any]
-    ) -> None:
+    def _extract_structured_entries(interpretation: str, model: Dict[str, Any]) -> None:
         """Extract relation/function entries from an interpretation block.
 
         Populates ``model["predicates"]``, ``model["functions"]``, and
@@ -250,21 +256,25 @@ class Mace4Wrapper:
         #   function(Name, [ value ])          (constant — zero-arity)
         entry_re = re.compile(
             r"(relation|function)\(\s*"
-            r"([a-zA-Z_][a-zA-Z0-9_]*)"   # name
-            r"(\([^)]*\))?"                # optional arity signature like "(_)" or "(_,_)"
+            r"([a-zA-Z_][a-zA-Z0-9_]*)"  # name
+            r"(\([^)]*\))?"  # optional arity signature like "(_)" or "(_,_)"
             r"\s*,\s*\[\s*"
-            r"([^\]]*)"                    # values inside [ ... ]
+            r"([^\]]*)"  # values inside [ ... ]
             r"\]"
         )
 
         for m in entry_re.finditer(interpretation):
-            kind = m.group(1)       # "relation" or "function"
-            name = m.group(2)       # predicate/function name
+            kind = m.group(1)  # "relation" or "function"
+            name = m.group(2)  # predicate/function name
             arity_sig = m.group(3)  # e.g. "(_)" or None for constants
             raw_vals = m.group(4).strip()
 
             # Parse the comma-separated values
-            values = [v.strip() for v in raw_vals.split(",") if v.strip()] if raw_vals else []
+            values = (
+                [v.strip() for v in raw_vals.split(",") if v.strip()]
+                if raw_vals
+                else []
+            )
 
             if kind == "relation":
                 model["predicates"][name] = values
@@ -275,24 +285,32 @@ class Mace4Wrapper:
                 model["functions"][name] = values
 
     async def find_model(
-        self, premises: List[str], domain_size: Optional[int] = None
+        self,
+        premises: List[str],
+        domain_size: Optional[int] = None,
+        timeout: int = 60,
     ) -> Dict[str, Any]:
         """Find a model that satisfies the given premises
 
         Args:
             premises: List of logical premises
             domain_size: Specific domain size, or None to search incrementally
+            timeout: Maximum search time in seconds
 
         Returns:
             Result dictionary with model if found
         """
         input_file = self._create_input_file(
-            premises, goal=None, domain_size=domain_size
+            premises, goal=None, domain_size=domain_size, timeout=timeout
         )
-        return await self._run_mace4(input_file)
+        return await self._run_mace4(input_file, timeout=timeout)
 
     async def find_counterexample(
-        self, premises: List[str], conclusion: str, domain_size: Optional[int] = None
+        self,
+        premises: List[str],
+        conclusion: str,
+        domain_size: Optional[int] = None,
+        timeout: int = 60,
     ) -> Dict[str, Any]:
         """Find a counterexample showing the conclusion doesn't follow from premises
 
@@ -303,14 +321,15 @@ class Mace4Wrapper:
             premises: List of logical premises
             conclusion: Conclusion to disprove
             domain_size: Specific domain size, or None to search incrementally
+            timeout: Maximum search time in seconds
 
         Returns:
             Result dictionary with counterexample model if found
         """
         input_file = self._create_input_file(
-            premises, goal=conclusion, domain_size=domain_size
+            premises, goal=conclusion, domain_size=domain_size, timeout=timeout
         )
-        result = await self._run_mace4(input_file)
+        result = await self._run_mace4(input_file, timeout=timeout)
 
         # If we found a model, it's a counterexample
         if result["result"] == "model_found":

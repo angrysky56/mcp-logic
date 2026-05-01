@@ -10,7 +10,6 @@ import json
 import logging
 import os
 import re
-import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, List
@@ -95,7 +94,7 @@ class LogicEngine:
             logger.warning("Mace4 not available: %s", e)
             self.mace4 = None
 
-    def _create_input_file(self, premises: List[str], goal: str) -> Path:
+    def create_input_file(self, premises: List[str], goal: str) -> Path:
         """Create a Prover9 input file"""
         content = [
             "formulas(assumptions).",
@@ -115,7 +114,7 @@ class LogicEngine:
             f.write(input_content)
         return Path(path)
 
-    async def _run_prover(self, input_path: Path, timeout: int = 60) -> Dict[str, Any]:
+    async def run_prover(self, input_path: Path, timeout: int = 60) -> Dict[str, Any]:
         """Run Prover9 directly"""
         try:
             logger.debug("Running Prover9 with input file: %s", input_path)
@@ -404,9 +403,7 @@ async def main(prover_path: str, log_level: str = "INFO"):
                     ]
 
                 # Smart Routing: Check if propositional (CORR-02)
-                is_propositional = not any(
-                    _is_fol_formula(f) for f in all_formulas
-                )
+                is_propositional = not any(_is_fol_formula(f) for f in all_formulas)
 
                 if is_propositional:
                     logger.info("Routing propositional proof to HCC")
@@ -450,10 +447,10 @@ async def main(prover_path: str, log_level: str = "INFO"):
                         )
 
                 # Run proof with Prover9
-                input_file = engine._create_input_file(
+                input_file = engine.create_input_file(
                     arguments["premises"], arguments["conclusion"]
                 )
-                results = await engine._run_prover(input_file)
+                results = await engine.run_prover(input_file)
                 results["method"] = "Prover9 (FOL)"
                 return [
                     types.TextContent(type="text", text=json.dumps(results, indent=2))

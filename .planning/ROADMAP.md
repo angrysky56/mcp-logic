@@ -99,7 +99,7 @@
 
 ---
 
-## Phase 5: Cleanup
+## Phase 5: Cleanup [Complete]
 
 **Goal:** Codebase is free of dead code, misleading configs, and undocumented tooling.
 
@@ -122,20 +122,20 @@
 
 ## Requirement Coverage
 
-| REQ-ID   | Description                            | Phase |
-| -------- | -------------------------------------- | ----- |
-| TEST-01  | Fix test_proofs.py Windows path        | 1     |
-| TEST-02  | Add assertions to test_enhancements.py | 1     |
-| RQ-02    | Configurable log level                 | 1     |
-| TEST-03  | GitHub Actions CI                      | 2     |
-| RQ-01    | Async subprocess (non-blocking)        | 3     |
-| CORR-01  | Mace4 parser dedup fix                 | 4     |
-| CORR-02  | Smart routing structural detection     | 4     |
-| CORR-03  | group_axioms() identity consistency    | 4     |
-| CORR-04  | Syntax validator quantifier scope      | 4     |
-| CLEAN-01 | Mace4 configurable timeout             | 5     |
-| CLEAN-02 | docker-env/ gitignore                  | 5     |
-| CLEAN-03 | Remove Dockerfile EXPOSE               | 5     |
-| CLEAN-04 | Restructure agent docs                 | 5     |
+| REQ-ID   | Description                            | Phase | Status |
+| -------- | -------------------------------------- | ----- | ------ |
+| TEST-01  | Fix test_proofs.py Windows path        | 1     | ✅     |
+| TEST-02  | Add assertions to test_enhancements.py | 1     | ✅     |
+| RQ-02    | Configurable log level                 | 1     | ✅     |
+| TEST-03  | GitHub Actions CI                      | 2     | ✅     |
+| RQ-01    | Async subprocess (non-blocking)        | 3     | ✅     |
+| CORR-01  | Mace4 parser dedup fix                 | 4     | ✅     |
+| CORR-02  | Smart routing structural detection     | 4     | ✅     |
+| CORR-03  | group_axioms() identity consistency    | 4     | ✅     |
+| CORR-04  | Syntax validator quantifier scope      | 4     | ✅     |
+| CLEAN-01 | Mace4 configurable timeout             | 5     | ✅     |
+| CLEAN-02 | docker-env/ gitignore                  | 5     | ✅     |
+| CLEAN-03 | Remove Dockerfile EXPOSE               | 5     | ✅     |
+| CLEAN-04 | Restructure agent docs                 | 5     | ✅     |
 
 **Coverage: 13/13 requirements mapped ✓**

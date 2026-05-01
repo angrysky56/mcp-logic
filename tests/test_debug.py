@@ -30,7 +30,7 @@ end_of_list.
         f.write(content)
 
     engine = LogicEngine("/home/ty/Repositories/ai_workspace/mcp-logic/ladr/bin")
-    result = await engine._run_prover(Path(path))
+    result = await engine.run_prover(Path(path))
     print("\nProver Result:", result)
 
     assert result["result"] == "proved"

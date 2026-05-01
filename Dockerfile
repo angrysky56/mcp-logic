@@ -39,8 +39,5 @@ RUN echo '#!/bin/bash' > /usr/local/prover9-mount/prover9.exe && \
 # Set environment variables
 ENV DOCKER_HOST=unix:///var/run/docker.sock
 
-# Expose ports - try multiple ports in case some are in use
-EXPOSE 8888 8889 8890 8891 8892
-
 # Command to run the server
 CMD ["sh", "-c", "uv --directory /app/src/mcp_logic run mcp_logic --prover-path /usr/local/prover9-mount"]

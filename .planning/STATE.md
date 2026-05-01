@@ -14,7 +14,7 @@
 | 2     | CI Pipeline        | ✅ Complete    |
 | 3     | Async Runtime Fix  | ✅ Complete    |
 | 4     | Correctness Fixes  | ✅ Complete    |
-| 5     | Cleanup            | ⬜ In progress |
+| 5     | Cleanup            | ✅ Complete    |
 
 ## Last Action
 
@@ -22,6 +22,7 @@
 2026-05-01: Phase 2 complete. Implemented GitHub Actions CI workflow (TEST-03), configured Trunk to handle Bandit assertions in tests, baselined linting issues, and added CI status badge to README.
 2026-05-01: Phase 3 complete. Refactored Prover9 and Mace4 execution to non-blocking async subprocesses (RQ-01). Modernized test suite with pytest-asyncio and verified all 84 tests pass.
 2026-05-01: Phase 4 complete. Addressed critical logic correctness issues and verified system stability.
+2026-05-01: Phase 5 complete. Configurable Mace4 timeouts (CLEAN-01), Dockerfile cleanup (CLEAN-03), and restructured agent documentation (CLEAN-04). v0.3.0 Milestone finalized.
 
 ## Decisions Log
 
