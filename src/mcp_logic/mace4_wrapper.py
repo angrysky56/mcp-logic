@@ -74,12 +74,13 @@ class Mace4Wrapper:
         content.append("end_of_list.")
         content.append("")
 
-        # Goal (for counterexamples) - negate it to find models where it's false
+        # Goal (for counterexamples) — Mace4's formulas(goals) block auto-negates
+        # and Skolemizes the goal internally (producing deny(N) clauses with
+        # Skolem constants), exactly like Prover9.  Pass it through as-is.
         if goal:
             content.append("formulas(goals).")
-            # Negate the goal - if Mace4 finds a model, the goal is false in that model
-            negated_goal = f"-(({goal.rstrip('.')}))"
-            content.append(negated_goal + ".")
+            clean_goal = goal.rstrip(".")
+            content.append(clean_goal + ".")
             content.append("end_of_list.")
 
         input_content = "\n".join(content)
