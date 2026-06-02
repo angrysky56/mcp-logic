@@ -5,7 +5,6 @@ Provides utilities for working with category theory concepts in first-order logi
 """
 
 
-
 class CategoricalHelpers:
     """Helper functions for categorical reasoning in first-order logic"""
 

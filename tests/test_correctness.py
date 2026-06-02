@@ -10,7 +10,6 @@ These tests verify:
 from mcp_logic.categorical_helpers import group_axioms, monoid_axioms
 from mcp_logic.syntax_validator import SyntaxValidator
 
-
 # ──────────────────────────────────────────────────────────────────────────────
 # CORR-01: Mace4 Parser Structured Output
 # ──────────────────────────────────────────────────────────────────────────────

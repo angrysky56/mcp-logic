@@ -82,7 +82,9 @@ class TestProveOutputShape:
 
     async def test_unprovable_offers_hint(self, prover_path):
         engine = LogicEngine(str(prover_path))
-        f = engine.create_input_file(["all x (man(x) -> mortal(x))"], "mortal(socrates)")
+        f = engine.create_input_file(
+            ["all x (man(x) -> mortal(x))"], "mortal(socrates)"
+        )
         result = await engine.run_prover(f)
         assert result["result"] == "unprovable"
         assert "find_counterexample" in result.get("hint", "")
