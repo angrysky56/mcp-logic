@@ -13,6 +13,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from mcp_logic.syntax_validator import normalize_formula
+
 logger = logging.getLogger("mcp_logic.mace4")
 
 
@@ -72,7 +74,8 @@ class Mace4Wrapper:
         # Premises (assumptions)
         content.append("formulas(assumptions).")
         for premise in premises:
-            content.append(premise if premise.endswith(".") else premise + ".")
+            p = normalize_formula(premise)
+            content.append(p if p.endswith(".") else p + ".")
         content.append("end_of_list.")
         content.append("")
 
@@ -81,7 +84,7 @@ class Mace4Wrapper:
         # Skolem constants), exactly like Prover9.  Pass it through as-is.
         if goal:
             content.append("formulas(goals).")
-            clean_goal = goal.rstrip(".")
+            clean_goal = normalize_formula(goal).rstrip(".")
             content.append(clean_goal + ".")
             content.append("end_of_list.")
 
@@ -136,8 +139,32 @@ class Mace4Wrapper:
                 if stderr_str:
                     logger.debug("Mace4 stderr:\n%s", stderr_str)
 
-                # Parse Mace4 output
-                if "DOMAIN SIZE" in stdout_str and "interpretation(" in stdout_str:
+                # Parse Mace4 output.
+                #
+                # Key on Mace4's authoritative exit-status line ("... exit (X)")
+                # rather than fragile substring matches. The previous code tested
+                # `"max_sec" in stdout_str`, but every input file echoes
+                # `assign(max_seconds, N)`, so a clean exhaustion (no model) was
+                # mislabeled as a timeout. Mace4's real signals are:
+                #   exit (max_models) + interpretation(...)  -> model found
+                #   exit (exhausted) / "Exiting with failure" -> no model exists
+                #   exit (max_seconds)                        -> genuine timeout
+                combined = stdout_str + "\n" + stderr_str
+                model_found = (
+                    "interpretation(" in stdout_str and "DOMAIN SIZE" in stdout_str
+                )
+                exhausted = (
+                    "exit (exhausted)" in combined
+                    or "Exiting with failure" in combined
+                    or "SEARCH FAILED" in stdout_str
+                    or "SEARCH TERMINATED" in stdout_str
+                )
+                hit_time_limit = (
+                    "exit (max_seconds)" in combined
+                    or "exit (max_megs)" in combined
+                )
+
+                if model_found:
                     # Model found!
                     model = self._parse_model(stdout_str)
                     result = {
@@ -147,18 +174,18 @@ class Mace4Wrapper:
                     if verbose:
                         result["complete_output"] = stdout_str
                     return result
-                elif "SEARCH FAILED" in stdout_str or "SEARCH TERMINATED" in stdout_str:
+                elif exhausted:
                     result = {
                         "result": "no_model_found",
-                        "reason": "No finite model found within domain size limits",
+                        "reason": "Mace4 exhausted the search space up to the domain-size bound; no finite model exists.",
                     }
                     if verbose:
                         result["complete_output"] = stdout_str
                     return result
-                elif "max_sec" in stdout_str or "max_sec" in stderr_str:
+                elif hit_time_limit:
                     return {
                         "result": "timeout",
-                        "reason": f"Model search exceeded {timeout} seconds (Mace4 internal timeout)",
+                        "reason": f"Model search exceeded {timeout} seconds (Mace4 internal limit).",
                         "complete_output": stdout_str,
                     }
                 elif "Fatal error" in stderr_str or "Fatal error" in stdout_str:

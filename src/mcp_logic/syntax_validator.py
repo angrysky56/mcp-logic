@@ -8,6 +8,30 @@ import re
 from typing import Any
 
 
+def normalize_formula(formula: str) -> str:
+    """Normalize a formula to the syntax LADR (Prover9/Mace4) accepts.
+
+    Callers naturally write logical negation as '~' (the most common notation),
+    but LADR's term reader only accepts '-' for negation and fails on '~' with
+    'sread_term error'. Rather than push that quirk onto every caller via prompt
+    instructions, we translate here at the boundary.
+
+    Conversions:
+      - '~' (negation) -> '-'
+
+    The translation is purely lexical and safe: '~' has no other meaning in
+    LADR formula syntax, so any occurrence is an intended negation.
+
+    Args:
+        formula: A first-order-logic formula string.
+
+    Returns:
+        The formula with LADR-compatible operators.
+    """
+    return formula.replace("~", "-")
+
+
+
 class SyntaxValidator:
     """Pre-validate logical formulas for common syntax errors"""
 

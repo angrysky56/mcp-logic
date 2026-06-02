@@ -28,7 +28,7 @@ from mcp_logic.hcc_prover import check_contingency
 
 # Import new modules
 from mcp_logic.mace4_wrapper import Mace4Wrapper
-from mcp_logic.syntax_validator import validate_formulas
+from mcp_logic.syntax_validator import normalize_formula, validate_formulas
 from mcp_logic.vfe_engine import abductive_explain, abductive_explain_fol
 
 # Set up logging - basic config, will be re-configured in main()
@@ -136,6 +136,8 @@ class LogicEngine:
 
     def create_input_file(self, premises: list[str], goal: str) -> Path:
         """Create a Prover9 input file"""
+        premises = [normalize_formula(p) for p in premises]
+        goal = normalize_formula(goal)
         content = [
             "formulas(assumptions).",
             *[p if p.endswith(".") else p + "." for p in premises],
