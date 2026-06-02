@@ -5,7 +5,7 @@ Provides early feedback on common syntax errors to improve user experience.
 """
 
 import re
-from typing import Dict, List, Tuple
+from typing import Any
 
 
 class SyntaxValidator:
@@ -20,7 +20,7 @@ class SyntaxValidator:
         self.errors = []
         self.warnings = []
 
-    def validate(self, formula: str) -> Tuple[bool, List[str], List[str]]:
+    def validate(self, formula: str) -> tuple[bool, list[str], list[str]]:
         """Validate a logical formula
 
         Args:
@@ -178,7 +178,7 @@ class SyntaxValidator:
             )
 
 
-def validate_formulas(formulas: List[str]) -> Dict[str, any]:
+def validate_formulas(formulas: list[str]) -> dict[str, Any]:
     """Validate a list of formulas
 
     Args:

@@ -19,10 +19,15 @@ from mcp_logic.syntax_validator import SyntaxValidator
 class TestMace4StructuredOutput:
     """Verify _parse_model produces structured predicates/functions and clean raw_interpretation."""
 
+    # Realistic Mace4 model output: a single interpretation(...) statement
+    # terminated by "]).", with NO "end_of_list" token (that only appears in
+    # input formula lists). The earlier parser searched for "end_of_list" and
+    # so never extracted anything from genuine Mace4 output — this sample
+    # guards against that regression.
     SAMPLE_MACE4_OUTPUT = """\
 ============================== DOMAIN SIZE 2 ===============================
 
-=== Model
+============================== MODEL =================================
 
 interpretation( 2, [number=1, seconds=0], [
 
@@ -33,7 +38,6 @@ interpretation( 2, [number=1, seconds=0], [
   function(e, [ 0 ])
 
 ]).
-end_of_list.
 
 ============================== end of model ================================
 """

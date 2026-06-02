@@ -12,7 +12,7 @@ import os
 import re
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import mcp.server.stdio
 import mcp.types as types
@@ -29,7 +29,7 @@ from mcp_logic.hcc_prover import check_contingency
 # Import new modules
 from mcp_logic.mace4_wrapper import Mace4Wrapper
 from mcp_logic.syntax_validator import validate_formulas
-from mcp_logic.vfe_engine import abductive_explain
+from mcp_logic.vfe_engine import abductive_explain, abductive_explain_fol
 
 # Set up logging - basic config, will be re-configured in main()
 logger = logging.getLogger("mcp_logic")
@@ -40,6 +40,46 @@ _QUANTIFIER_RE = re.compile(r"\b(all|exists)\s+[a-z]")
 # Match predicate/function calls with arguments: 'p(x)', 'loves(x,y)'
 # Excludes quantifier keywords followed by parentheses (handled above).
 _PREDICATE_CALL_RE = re.compile(r"\b(?!all\b|exists\b)([a-zA-Z_]\w*)\s*\(")
+
+
+def _extract_proof(output: str) -> str:
+    """Extract the human-readable proof block from Prover9 output.
+
+    Prover9 delimits the proof with banner lines of the form
+    ``==== PROOF ====`` ... ``==== end of proof ====``.  The previous
+    implementation split on the literal ``"PROOF ="`` which collided with
+    the row of ``=`` characters in the banner and always produced an empty
+    string.  This regex captures everything between the two banners.
+
+    Args:
+        output: Raw Prover9 stdout.
+
+    Returns:
+        The proof text (clause-by-clause derivation), or "" if not found.
+    """
+    match = re.search(
+        r"=+\s*PROOF\s*=+\s*\n(.*?)\n=+\s*end of proof", output, re.DOTALL
+    )
+    return match.group(1).strip() if match else ""
+
+
+def _extract_proof_stats(output: str) -> dict[str, Any]:
+    """Pull a few useful numbers out of Prover9 output for a concise summary.
+
+    Args:
+        output: Raw Prover9 stdout.
+
+    Returns:
+        Dict with any of: ``length`` (proof length), ``level``, ``seconds``.
+    """
+    stats: dict[str, Any] = {}
+    if m := re.search(r"Length of proof is (\d+)", output):
+        stats["length"] = int(m.group(1))
+    if m := re.search(r"Level of proof is (\d+)", output):
+        stats["level"] = int(m.group(1))
+    if m := re.search(r"Proof 1 at ([\d.]+)", output):
+        stats["seconds"] = float(m.group(1))
+    return stats
 
 
 def _is_fol_formula(formula: str) -> bool:
@@ -94,7 +134,7 @@ class LogicEngine:
             logger.warning("Mace4 not available: %s", e)
             self.mace4 = None
 
-    def create_input_file(self, premises: List[str], goal: str) -> Path:
+    def create_input_file(self, premises: list[str], goal: str) -> Path:
         """Create a Prover9 input file"""
         content = [
             "formulas(assumptions).",
@@ -114,8 +154,24 @@ class LogicEngine:
             f.write(input_content)
         return Path(path)
 
-    async def run_prover(self, input_path: Path, timeout: int = 60) -> Dict[str, Any]:
-        """Run Prover9 directly"""
+    async def run_prover(
+        self, input_path: Path, timeout: int = 60, verbose: bool = False
+    ) -> dict[str, Any]:
+        """Run Prover9 directly.
+
+        Args:
+            input_path: Path to the Prover9 input file.
+            timeout: Wall-clock timeout in seconds.
+            verbose: When True, include the full raw Prover9 output under
+                ``complete_output``.  When False (default), only a concise,
+                agent-friendly summary is returned to avoid flooding the
+                context with banner text.
+
+        Returns:
+            Result dict.  On success: ``result="proved"``, ``proof`` (clean
+            derivation), and ``stats``.  On failure: ``result`` plus a
+            ``hint`` suggesting a next step.
+        """
         try:
             logger.debug("Running Prover9 with input file: %s", input_path)
 
@@ -145,30 +201,48 @@ class LogicEngine:
                     logger.debug("Prover9 stderr:\n%s", stderr_str)
 
                 if "THEOREM PROVED" in stdout_str:
-                    proof = stdout_str.split("PROOF =")[1].split("====")[0].strip()
-                    return {
+                    result = {
                         "result": "proved",
-                        "proof": proof,
-                        "complete_output": stdout_str,
+                        "proof": _extract_proof(stdout_str),
+                        "stats": _extract_proof_stats(stdout_str),
                     }
+                    if verbose:
+                        result["complete_output"] = stdout_str
+                    return result
                 elif "SEARCH FAILED" in stdout_str:
-                    return {
+                    result = {
                         "result": "unprovable",
-                        "reason": "Proof search failed",
-                        "complete_output": stdout_str,
+                        "reason": (
+                            "Proof search exhausted without finding a proof. "
+                            "The conclusion does not follow from the premises, "
+                            "or the premises are too weak."
+                        ),
+                        "hint": (
+                            "Use find_counterexample with the same premises and "
+                            "conclusion to obtain a concrete model where the "
+                            "premises hold but the conclusion fails."
+                        ),
                     }
-                elif "Fatal error" in stderr_str:
+                    if verbose:
+                        result["complete_output"] = stdout_str
+                    return result
+                elif "Fatal error" in stderr_str or "Fatal error" in stdout_str:
                     return {
                         "result": "error",
-                        "reason": "Syntax error",
-                        "error": stderr_str,
+                        "reason": "Prover9 syntax/processing error",
+                        "error": (stderr_str or stdout_str).strip()[-1000:],
+                        "hint": (
+                            "Check formula syntax with check_well_formed. Common "
+                            "issues: unbalanced parens, missing quantifier scope "
+                            "'all x (...)', or empty argument lists."
+                        ),
                     }
                 else:
                     return {
                         "result": "error",
-                        "reason": "Unexpected output",
-                        "output": stdout_str,
-                        "error": stderr_str,
+                        "reason": "Unexpected Prover9 output",
+                        "output": stdout_str.strip()[-1000:],
+                        "error": stderr_str.strip()[-500:],
                     }
 
             except asyncio.TimeoutError:
@@ -216,18 +290,38 @@ async def main(prover_path: str, log_level: str = "INFO"):
         tools = [
             types.Tool(
                 name="prove",
-                description="Prove a logical statement using Prover9 or HCC",
+                description=(
+                    "Prove that a conclusion follows from premises. Automatically "
+                    "routes pure propositional problems to a fast analytic checker "
+                    "(HCC) and first-order problems (quantifiers like 'all x', "
+                    "'exists y', or predicates with arguments like p(x)) to "
+                    "Prover9. Returns result='proved' with the derivation, or "
+                    "result='unprovable' with a hint to try find_counterexample. "
+                    "Syntax: -> (implies), <-> (iff), & (and), | (or), ~ (not); "
+                    "quantifiers must scope with parens, e.g. 'all x (man(x) -> "
+                    "mortal(x))'."
+                ),
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "premises": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "description": "List of logical premises",
+                            "description": (
+                                "Assumptions, each a well-formed formula string. "
+                                "May be an empty list to prove a logical truth."
+                            ),
                         },
                         "conclusion": {
                             "type": "string",
-                            "description": "Statement to prove",
+                            "description": "The single statement to prove.",
+                        },
+                        "verbose": {
+                            "type": "boolean",
+                            "description": (
+                                "If true, include the full raw Prover9 output. "
+                                "Default false (concise proof + stats only)."
+                            ),
                         },
                     },
                     "required": ["premises", "conclusion"],
@@ -250,18 +344,34 @@ async def main(prover_path: str, log_level: str = "INFO"):
             ),
             types.Tool(
                 name="find_model",
-                description="Use Mace4 to find a finite model satisfying the given premises",
+                description=(
+                    "Find a concrete finite model (a world) in which all the "
+                    "given premises are simultaneously true, using Mace4. Use "
+                    "this to check that a set of axioms is satisfiable / "
+                    "consistent, or to see an example structure. Returns the "
+                    "domain size and the interpretation of each predicate, "
+                    "function, and constant. result='no_model_found' means no "
+                    "model exists up to the domain bound (premises may be "
+                    "contradictory)."
+                ),
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "premises": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "description": "List of logical premises",
+                            "description": "Formulas that must all hold in the model.",
                         },
                         "domain_size": {
                             "type": "integer",
-                            "description": "Optional: specific domain size to search",
+                            "description": (
+                                "Exact domain size to search. Omit to scan sizes "
+                                "2..10 automatically."
+                            ),
+                        },
+                        "verbose": {
+                            "type": "boolean",
+                            "description": "Include raw Mace4 output. Default false.",
                         },
                     },
                     "required": ["premises"],
@@ -269,22 +379,38 @@ async def main(prover_path: str, log_level: str = "INFO"):
             ),
             types.Tool(
                 name="find_counterexample",
-                description="Use Mace4 to find a counterexample",
+                description=(
+                    "Show that a conclusion does NOT follow from the premises by "
+                    "finding a model where every premise is true but the "
+                    "conclusion is false (via Mace4). This is the natural "
+                    "complement to 'prove': if prove returns 'unprovable', call "
+                    "this to get the concrete counterexample. result='model_found' "
+                    "means the argument is invalid; 'no_model_found' means none "
+                    "exists up to the domain bound (the argument may be valid — "
+                    "confirm with prove)."
+                ),
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "premises": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "description": "List of logical premises",
+                            "description": "Assumptions held true in the search.",
                         },
                         "conclusion": {
                             "type": "string",
-                            "description": "Conclusion to disprove",
+                            "description": "The statement to falsify.",
                         },
                         "domain_size": {
                             "type": "integer",
-                            "description": "Optional: specific domain size to search",
+                            "description": (
+                                "Exact domain size to search. Omit to scan sizes "
+                                "2..10 automatically."
+                            ),
+                        },
+                        "verbose": {
+                            "type": "boolean",
+                            "description": "Include raw Mace4 output. Default false.",
                         },
                     },
                     "required": ["premises", "conclusion"],
@@ -355,23 +481,50 @@ async def main(prover_path: str, log_level: str = "INFO"):
             types.Tool(
                 name="abductive_explain",
                 description=(
-                    "Find the VFE-minimizing abductive explanation for an observation from a list of candidates"
+                    "Inference to the best explanation. Given an observation and "
+                    "candidate hypotheses, returns the simplest candidate that — "
+                    "together with an optional background theory — logically "
+                    "entails the observation and stays consistent. Each result is "
+                    "flagged with 'explains' (true = it actually entails the "
+                    "observation). For a real explanation, pass a 'background' "
+                    "theory linking causes to the observation, e.g. "
+                    "observation='wet_grass', candidates=['rained','sprinkler'], "
+                    "background=['rained -> wet_grass','sprinkler -> wet_grass']. "
+                    "Propositional and first-order inputs are both accepted: the "
+                    "tool auto-detects quantifiers/predicate calls and routes "
+                    "first-order cases to Prover9 (entailment) + Mace4 "
+                    "(consistency), e.g. observation='mortal(socrates)', "
+                    "candidates=['man(socrates)'], background=['all x (man(x) -> "
+                    "mortal(x))']. The response 'logic' field reports which path "
+                    "was used. Ranking blends logical adequacy with Occam "
+                    "simplicity (VFE)."
                 ),
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "observation": {
                             "type": "string",
-                            "description": "The formula string representing the observation",
+                            "description": (
+                                "The formula that was observed (propositional or "
+                                "first-order)."
+                            ),
                         },
                         "candidates": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "description": "List of candidate explanation formulas",
+                            "description": "Candidate explanation formulas to rank.",
+                        },
+                        "background": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": (
+                                "Optional background theory (domain rules) used to "
+                                "decide whether a candidate entails the observation."
+                            ),
                         },
                         "max_complexity": {
                             "type": "integer",
-                            "description": "Optional: maximum complexity bound (default: 20)",
+                            "description": "Maximum candidate complexity (default 20).",
                         },
                     },
                     "required": ["observation", "candidates"],
@@ -386,9 +539,40 @@ async def main(prover_path: str, log_level: str = "INFO"):
     ) -> list[types.TextContent | types.ImageContent | types.EmbeddedResource]:
         """Handle tool execution requests"""
         try:
+            if not arguments:
+                arguments = {}
+
+            # Normalize arguments globally for all tools
+            if "premises" in arguments:
+                premises = arguments["premises"]
+                if isinstance(premises, dict):
+                    # Un-wrap if client (like Claude) passed {"item": [...]}
+                    arguments["premises"] = premises.get(
+                        "item", list(premises.values())
+                    )
+                elif isinstance(premises, str):
+                    arguments["premises"] = [premises]
+
+            if "goal" in arguments and "conclusion" not in arguments:
+                arguments["conclusion"] = arguments["goal"]
+
             if name == "prove":
+                conclusion = arguments.get("conclusion")
+                if not conclusion:
+                    return [
+                        types.TextContent(
+                            type="text",
+                            text=json.dumps(
+                                {
+                                    "error": "Missing required argument: 'conclusion' (or 'goal')"
+                                },
+                                indent=2,
+                            ),
+                        )
+                    ]
+
                 # Validate syntax first
-                all_formulas = arguments["premises"] + [arguments["conclusion"]]
+                all_formulas = arguments["premises"] + [conclusion]
                 validation = validate_formulas(all_formulas)
 
                 if not validation["valid"]:
@@ -420,20 +604,39 @@ async def main(prover_path: str, log_level: str = "INFO"):
 
                     try:
                         hcc_res = check_contingency(full_formula)
-                        results = {
-                            "result": (
-                                "proved"
-                                if hcc_res.is_tautology
-                                else (
-                                    "refuted"
-                                    if hcc_res.is_contradiction
-                                    else "unprovable"
-                                )
-                            ),
-                            "status": hcc_res.message,
-                            "method": "HCC (Propositional)",
-                            "contingent": hcc_res.is_contingent,
-                        }
+                        if hcc_res.is_tautology:
+                            results = {
+                                "result": "proved",
+                                "status": (
+                                    "Valid: the conclusion is true in every "
+                                    "model of the premises (the implication is "
+                                    "a tautology)."
+                                ),
+                            }
+                        elif hcc_res.is_contradiction:
+                            results = {
+                                "result": "refuted",
+                                "status": (
+                                    "The premises are mutually contradictory, so "
+                                    "they prove anything trivially (and their "
+                                    "negation holds in no model)."
+                                ),
+                            }
+                        else:
+                            results = {
+                                "result": "unprovable",
+                                "status": (
+                                    "Invalid: the conclusion does not follow. "
+                                    "There is at least one assignment making the "
+                                    "premises true and the conclusion false."
+                                ),
+                                "hint": (
+                                    "Use check_contingency on the implication, or "
+                                    "find_counterexample, to inspect the falsifying "
+                                    "assignment."
+                                ),
+                            }
+                        results["method"] = "HCC (propositional)"
                         return [
                             types.TextContent(
                                 type="text", text=json.dumps(results, indent=2)
@@ -450,7 +653,9 @@ async def main(prover_path: str, log_level: str = "INFO"):
                 input_file = engine.create_input_file(
                     arguments["premises"], arguments["conclusion"]
                 )
-                results = await engine.run_prover(input_file)
+                results = await engine.run_prover(
+                    input_file, verbose=arguments.get("verbose", False)
+                )
                 results["method"] = "Prover9 (FOL)"
                 return [
                     types.TextContent(type="text", text=json.dumps(results, indent=2))
@@ -475,7 +680,9 @@ async def main(prover_path: str, log_level: str = "INFO"):
 
                 domain_size = arguments.get("domain_size")
                 result = await engine.mace4.find_model(
-                    arguments["premises"], domain_size
+                    arguments["premises"],
+                    domain_size,
+                    verbose=arguments.get("verbose", False),
                 )
                 return [
                     types.TextContent(type="text", text=json.dumps(result, indent=2))
@@ -492,7 +699,10 @@ async def main(prover_path: str, log_level: str = "INFO"):
 
                 domain_size = arguments.get("domain_size")
                 result = await engine.mace4.find_counterexample(
-                    arguments["premises"], arguments["conclusion"], domain_size
+                    arguments["premises"],
+                    arguments["conclusion"],
+                    domain_size,
+                    verbose=arguments.get("verbose", False),
                 )
                 return [
                     types.TextContent(type="text", text=json.dumps(result, indent=2))
@@ -568,11 +778,49 @@ async def main(prover_path: str, log_level: str = "INFO"):
                 ]
 
             elif name == "abductive_explain":
-                res = abductive_explain(
-                    arguments["observation"],
-                    arguments["candidates"],
-                    arguments.get("max_complexity", 20),
-                )
+                observation = arguments["observation"]
+                candidates = arguments["candidates"]
+                background = arguments.get("background") or []
+                max_complexity = arguments.get("max_complexity", 20)
+
+                # Smart routing: if the observation, any candidate, or any
+                # background formula is first-order, use the Prover9/Mace4
+                # path; otherwise stay on the fast propositional HCC path.
+                all_formulas = [observation, *candidates, *background]
+                is_fol = any(_is_fol_formula(f) for f in all_formulas)
+
+                if is_fol:
+                    # Per-candidate FOL checks get a short timeout to keep the
+                    # overall call responsive even with several candidates.
+                    fol_timeout = 10
+
+                    async def _prove_fn(premises: list[str], conclusion: str) -> bool:
+                        f = engine.create_input_file(premises, conclusion)
+                        r = await engine.run_prover(f, timeout=fol_timeout)
+                        return r.get("result") == "proved"
+
+                    async def _model_fn(premises: list[str]) -> bool:
+                        if engine.mace4 is None:
+                            # No model finder: skip the consistency filter.
+                            return True
+                        r = await engine.mace4.find_model(premises, timeout=fol_timeout)
+                        return r.get("result") == "model_found"
+
+                    res = await abductive_explain_fol(
+                        observation,
+                        candidates,
+                        _prove_fn,
+                        _model_fn,
+                        max_complexity,
+                        background,
+                    )
+                else:
+                    res = abductive_explain(
+                        observation,
+                        candidates,
+                        max_complexity,
+                        background,
+                    )
                 if not res.best_explanation:
                     return [
                         types.TextContent(
@@ -588,13 +836,16 @@ async def main(prover_path: str, log_level: str = "INFO"):
                     ]
 
                 result = {
+                    "logic": "first_order" if is_fol else "propositional",
                     "best_explanation": res.best_explanation.formula_str,
+                    "explains_observation": res.best_explanation.explains,
                     "vfe_score": res.best_explanation.vfe_score,
                     "complexity": res.best_explanation.complexity,
                     "message": res.message,
                     "ranking": [
                         {
                             "formula": c.formula_str,
+                            "explains": c.explains,
                             "score": c.vfe_score,
                             "prior": c.prior,
                         }

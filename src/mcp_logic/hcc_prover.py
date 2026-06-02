@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import itertools
 from dataclasses import dataclass
-from typing import FrozenSet, List, Optional, Set, Tuple
 
 from mcp_logic.formula_ast import (
     And,
@@ -25,10 +24,10 @@ from mcp_logic.formula_ast import (
 )
 
 # A Component is a frozenset of formulas (representing a disjunction)
-Component = FrozenSet[Formula]
+Component = frozenset[Formula]
 
 # A Hypersequent is a tuple of Components (representing a conjunction)
-Hypersequent = Tuple[Component, ...]
+Hypersequent = tuple[Component, ...]
 
 
 @dataclass(frozen=True)
@@ -38,7 +37,7 @@ class ProofStep:
     rule: str
     before: Hypersequent
     after: Hypersequent
-    formula: Optional[Formula] = None
+    formula: Formula | None = None
 
 
 @dataclass(frozen=True)
@@ -48,7 +47,7 @@ class ContingencyResult:
     is_contingent: bool
     is_tautology: bool
     is_contradiction: bool
-    proof_trace: List[ProofStep]
+    proof_trace: list[ProofStep]
     final_hyperclause: Hypersequent
     message: str
 
@@ -74,7 +73,7 @@ def check_contingency(formula_str: str) -> ContingencyResult:
     # 2. Initialize hypersequent: One component containing the single formula
     initial_component: Component = frozenset({formula})
     current_hs: Hypersequent = (initial_component,)
-    trace: List[ProofStep] = []
+    trace: list[ProofStep] = []
 
     # 3. Bottom-up decomposition
     while True:
@@ -113,7 +112,7 @@ def check_contingency(formula_str: str) -> ContingencyResult:
 
 def _apply_next_decomposition(
     hs: Hypersequent,
-) -> Tuple[Optional[Hypersequent], str, Optional[Formula]]:
+) -> tuple[Hypersequent | None, str, Formula | None]:
     """Find the first non-literal and apply its rule. OR before AND for efficiency."""
 
     # Try OR rule first (non-branching in terms of components)
@@ -149,7 +148,7 @@ def _apply_next_decomposition(
     return None, "", None
 
 
-def _check_condition_a(hyperclause: Hypersequent) -> Tuple[bool, List[int]]:
+def _check_condition_a(hyperclause: Hypersequent) -> tuple[bool, list[int]]:
     """Condition A: Hypersequent is non-tautological if it has at least one consistent component."""
     inconsistent_indices = []
     has_consistent = False
@@ -165,7 +164,7 @@ def _check_condition_a(hyperclause: Hypersequent) -> Tuple[bool, List[int]]:
 
 def _check_condition_b(
     hyperclause: Hypersequent,
-) -> Tuple[bool, Optional[Set[Formula]]]:
+) -> tuple[bool, set[Formula] | None]:
     """Condition B: Hypersequent is non-contradictory if some cross-clause is consistent."""
 
     # We need to select 1 literal from component 0, 1 from component 1, etc.
@@ -181,7 +180,7 @@ def _check_condition_b(
     return False, None
 
 
-def _is_consistent(clause: FrozenSet[Formula]) -> bool:
+def _is_consistent(clause: frozenset[Formula]) -> bool:
     """A set of literals is consistent if it contains no pair p, ~p."""
     atoms = set()
     negated_atoms = set()

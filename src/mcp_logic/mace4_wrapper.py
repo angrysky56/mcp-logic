@@ -11,7 +11,7 @@ import logging
 import os
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger("mcp_logic.mace4")
 
@@ -40,9 +40,9 @@ class Mace4Wrapper:
 
     def _create_input_file(
         self,
-        premises: List[str],
-        goal: Optional[str] = None,
-        domain_size: Optional[int] = None,
+        premises: list[str],
+        goal: str | None = None,
+        domain_size: int | None = None,
         timeout: int = 60,
     ) -> Path:
         """Create a Mace4 input file
@@ -93,12 +93,17 @@ class Mace4Wrapper:
             f.write(input_content)
         return Path(path)
 
-    async def _run_mace4(self, input_path: Path, timeout: int = 60) -> Dict[str, Any]:
+    async def _run_mace4(
+        self, input_path: Path, timeout: int = 60, verbose: bool = False
+    ) -> dict[str, Any]:
         """Run Mace4 model finder
 
         Args:
             input_path: Path to input file
             timeout: Timeout in seconds
+            verbose: When True, include the full raw Mace4 output under
+                ``complete_output``.  Default False returns only the parsed,
+                structured model to keep responses compact.
 
         Returns:
             Dictionary with result, model details, and output
@@ -135,17 +140,21 @@ class Mace4Wrapper:
                 if "DOMAIN SIZE" in stdout_str and "interpretation(" in stdout_str:
                     # Model found!
                     model = self._parse_model(stdout_str)
-                    return {
+                    result = {
                         "result": "model_found",
                         "model": model,
-                        "complete_output": stdout_str,
                     }
+                    if verbose:
+                        result["complete_output"] = stdout_str
+                    return result
                 elif "SEARCH FAILED" in stdout_str or "SEARCH TERMINATED" in stdout_str:
-                    return {
+                    result = {
                         "result": "no_model_found",
                         "reason": "No finite model found within domain size limits",
-                        "complete_output": stdout_str,
                     }
+                    if verbose:
+                        result["complete_output"] = stdout_str
+                    return result
                 elif "max_sec" in stdout_str or "max_sec" in stderr_str:
                     return {
                         "result": "timeout",
@@ -187,7 +196,7 @@ class Mace4Wrapper:
             except (FileNotFoundError, PermissionError, OSError):
                 pass  # Temp file cleanup failed, not critical
 
-    def _parse_model(self, output: str) -> Dict[str, Any]:
+    def _parse_model(self, output: str) -> dict[str, Any]:
         """Parse Mace4 model output into structured format.
 
         Extracts domain size, predicates (from ``relation()``), functions
@@ -201,7 +210,7 @@ class Mace4Wrapper:
         Returns:
             Structured model representation
         """
-        model: Dict[str, Any] = {
+        model: dict[str, Any] = {
             "domain_size": None,
             "predicates": {},
             "functions": {},
@@ -224,12 +233,20 @@ class Mace4Wrapper:
                 except (ValueError, IndexError):
                     pass
 
-        # Extract interpretation block (once — no duplication)
+        # Extract interpretation block (once — no duplication).
+        #
+        # Mace4 model output is a single ``interpretation(...)`` statement
+        # terminated by ``]).`` — it does NOT contain ``end_of_list`` (that
+        # token only appears in *input* formula lists).  The earlier code
+        # searched for ``end_of_list`` as the terminator, never found it, and
+        # so left predicates/functions/constants empty on real Mace4 output.
+        # We now terminate on the ``])`` that closes the value list + call.
         if "interpretation(" in output:
             start = output.find("interpretation(")
-            end = output.find("end_of_list", start)
-            if end > start:
-                interpretation = output[start : end + len("end_of_list")]
+            end = output.find("]).", start)
+            if end != -1:
+                # Include the closing "])" of the interpretation call.
+                interpretation = output[start : end + 2]
                 model["raw_interpretation"] = interpretation.strip()
 
                 # Parse relation() and function() entries into structured dicts
@@ -238,7 +255,7 @@ class Mace4Wrapper:
         return model
 
     @staticmethod
-    def _extract_structured_entries(interpretation: str, model: Dict[str, Any]) -> None:
+    def _extract_structured_entries(interpretation: str, model: dict[str, Any]) -> None:
         """Extract relation/function entries from an interpretation block.
 
         Populates ``model["predicates"]``, ``model["functions"]``, and
@@ -286,16 +303,18 @@ class Mace4Wrapper:
 
     async def find_model(
         self,
-        premises: List[str],
-        domain_size: Optional[int] = None,
+        premises: list[str],
+        domain_size: int | None = None,
         timeout: int = 60,
-    ) -> Dict[str, Any]:
+        verbose: bool = False,
+    ) -> dict[str, Any]:
         """Find a model that satisfies the given premises
 
         Args:
             premises: List of logical premises
             domain_size: Specific domain size, or None to search incrementally
             timeout: Maximum search time in seconds
+            verbose: Include raw Mace4 output when True.
 
         Returns:
             Result dictionary with model if found
@@ -303,15 +322,16 @@ class Mace4Wrapper:
         input_file = self._create_input_file(
             premises, goal=None, domain_size=domain_size, timeout=timeout
         )
-        return await self._run_mace4(input_file, timeout=timeout)
+        return await self._run_mace4(input_file, timeout=timeout, verbose=verbose)
 
     async def find_counterexample(
         self,
-        premises: List[str],
+        premises: list[str],
         conclusion: str,
-        domain_size: Optional[int] = None,
+        domain_size: int | None = None,
         timeout: int = 60,
-    ) -> Dict[str, Any]:
+        verbose: bool = False,
+    ) -> dict[str, Any]:
         """Find a counterexample showing the conclusion doesn't follow from premises
 
         This searches for a model where all premises are true but the conclusion is false.
@@ -329,13 +349,21 @@ class Mace4Wrapper:
         input_file = self._create_input_file(
             premises, goal=conclusion, domain_size=domain_size, timeout=timeout
         )
-        result = await self._run_mace4(input_file, timeout=timeout)
+        result = await self._run_mace4(input_file, timeout=timeout, verbose=verbose)
 
         # If we found a model, it's a counterexample
         if result["result"] == "model_found":
             result["interpretation"] = (
                 f"Counterexample found: The premises are satisfied but "
                 f"the conclusion '{conclusion}' is FALSE in this model."
+            )
+        elif result["result"] == "no_model_found":
+            # No counterexample exists within the search bounds — this is
+            # *evidence for* (not proof of) the conclusion following.
+            result["interpretation"] = (
+                "No counterexample found within the domain-size bound. The "
+                "conclusion may be valid — use the 'prove' tool to confirm it "
+                "follows from the premises."
             )
 
         return result

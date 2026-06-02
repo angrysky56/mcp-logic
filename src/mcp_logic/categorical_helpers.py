@@ -4,14 +4,13 @@ Categorical reasoning helpers for translating categorical properties to FOL.
 Provides utilities for working with category theory concepts in first-order logic.
 """
 
-from typing import Dict, List, Tuple
 
 
 class CategoricalHelpers:
     """Helper functions for categorical reasoning in first-order logic"""
 
     @staticmethod
-    def category_axioms() -> List[str]:
+    def category_axioms() -> list[str]:
         """Generate basic category theory axioms
 
         Returns:
@@ -33,7 +32,7 @@ class CategoricalHelpers:
         ]
 
     @staticmethod
-    def functor_axioms(functor_name: str = "F") -> List[str]:
+    def functor_axioms(functor_name: str = "F") -> list[str]:
         """Generate functor axioms
 
         Args:
@@ -52,8 +51,8 @@ class CategoricalHelpers:
 
     @staticmethod
     def verify_commutativity(
-        path_a: List[str], path_b: List[str], object_start: str, object_end: str
-    ) -> Tuple[List[str], str]:
+        path_a: list[str], path_b: list[str], object_start: str, object_end: str
+    ) -> tuple[list[str], str]:
         """Generate FOL to verify diagram commutativity
 
         Two paths in a diagram commute if composing morphisms along each path
@@ -107,7 +106,7 @@ class CategoricalHelpers:
     @staticmethod
     def natural_transformation_condition(
         functor_f: str = "F", functor_g: str = "G", component: str = "alpha"
-    ) -> List[str]:
+    ) -> list[str]:
         """Generate naturality condition for a natural transformation
 
         For natural transformation α: F ⇒ G, the naturality square must commute:
@@ -131,7 +130,7 @@ class CategoricalHelpers:
         ]
 
 
-def _compose_path_helper(path: List[str], result_name: str) -> Dict:
+def _compose_path_helper(path: list[str], result_name: str) -> dict:
     """Helper to generate composition premises for a path
 
     Args:
@@ -158,7 +157,7 @@ def _compose_path_helper(path: List[str], result_name: str) -> Dict:
 # Convenience functions for common categorical concepts
 
 
-def monoid_axioms() -> List[str]:
+def monoid_axioms() -> list[str]:
     """Axioms for a monoid (category with one object)"""
     return [
         # Binary operation
@@ -170,7 +169,7 @@ def monoid_axioms() -> List[str]:
     ]
 
 
-def group_axioms() -> List[str]:
+def group_axioms() -> list[str]:
     """Axioms for a group"""
     return monoid_axioms() + [
         # Inverses exist

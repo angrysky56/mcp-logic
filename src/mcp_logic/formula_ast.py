@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import FrozenSet, Union
 
 # ---------------------------------------------------------------------------
 # AST Node Types
@@ -66,7 +65,7 @@ class Or:
 
 
 # Union type for all formula nodes
-Formula = Union[Var, Not, And, Or]
+Formula = Var | Not | And | Or
 
 
 def _paren_if_needed(f: Formula, parent_type: type) -> str:
@@ -345,7 +344,7 @@ def complexity(f: Formula) -> int:
     return 0  # pragma: no cover
 
 
-def atoms(f: Formula) -> FrozenSet[str]:
+def atoms(f: Formula) -> frozenset[str]:
     """Extract all atomic variable names from a formula.
 
     Args:
