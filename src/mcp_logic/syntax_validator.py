@@ -31,7 +31,6 @@ def normalize_formula(formula: str) -> str:
     return formula.replace("~", "-")
 
 
-
 class SyntaxValidator:
     """Pre-validate logical formulas for common syntax errors"""
 

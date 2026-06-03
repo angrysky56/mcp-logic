@@ -10,11 +10,12 @@ Regression tests for two mcp-logic fixes (see AGEM docs §15):
    Mace4 'sread_term error'.
 """
 
-import pytest
 from pathlib import Path
 
-from mcp_logic.syntax_validator import normalize_formula
+import pytest
+
 from mcp_logic.mace4_wrapper import Mace4Wrapper
+from mcp_logic.syntax_validator import normalize_formula
 
 LADR_BIN = Path(__file__).resolve().parents[1] / "ladr" / "bin"
 

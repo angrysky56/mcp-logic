@@ -160,8 +160,7 @@ class Mace4Wrapper:
                     or "SEARCH TERMINATED" in stdout_str
                 )
                 hit_time_limit = (
-                    "exit (max_seconds)" in combined
-                    or "exit (max_megs)" in combined
+                    "exit (max_seconds)" in combined or "exit (max_megs)" in combined
                 )
 
                 if model_found:
