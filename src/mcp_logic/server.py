@@ -354,7 +354,12 @@ async def main(prover_path: str, log_level: str = "INFO"):
                     "domain size and the interpretation of each predicate, "
                     "function, and constant. result='no_model_found' means no "
                     "model exists up to the domain bound (premises may be "
-                    "contradictory)."
+                    "contradictory). A found model carries a 'vacuity' "
+                    "assessment; a degenerate empty-world model (every "
+                    "predicate false everywhere) is flagged with a top-level "
+                    "'warning' and only VACUOUSLY satisfies universal "
+                    "conditionals — assert existence (e.g. 'exists x (P(x))') "
+                    "and re-check before calling the axioms consistent."
                 ),
                 inputSchema={
                     "type": "object",
@@ -389,7 +394,10 @@ async def main(prover_path: str, log_level: str = "INFO"):
                     "this to get the concrete counterexample. result='model_found' "
                     "means the argument is invalid; 'no_model_found' means none "
                     "exists up to the domain bound (the argument may be valid — "
-                    "confirm with prove)."
+                    "confirm with prove). A found counter-model carries a "
+                    "'vacuity' assessment; an empty-world counter-model is "
+                    "flagged with a 'warning' and exhibits no real instance "
+                    "where the premises hold and the conclusion fails."
                 ),
                 inputSchema={
                     "type": "object",

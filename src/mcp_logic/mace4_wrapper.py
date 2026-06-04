@@ -170,6 +170,17 @@ class Mace4Wrapper:
                         "result": "model_found",
                         "model": model,
                     }
+                    # Surface a top-level warning when the model is degenerate
+                    # (the empty world), so callers do not mistake vacuous
+                    # satisfaction for substantive consistency.
+                    if model.get("vacuity", {}).get("is_vacuous"):
+                        result["warning"] = (
+                            "VACUOUS MODEL: every predicate is empty (the empty "
+                            "world). The premises are satisfied only trivially; "
+                            "this does NOT establish substantive consistency. "
+                            "Assert existence for the relevant entities "
+                            "(e.g. 'exists x (P(x))') and re-run."
+                        )
                     if verbose:
                         result["complete_output"] = stdout_str
                     return result
@@ -278,6 +289,10 @@ class Mace4Wrapper:
                 # Parse relation() and function() entries into structured dicts
                 self._extract_structured_entries(interpretation, model)
 
+        # Flag degenerate / vacuously-satisfying models (the "empty world"),
+        # so callers don't mistake vacuous satisfaction for real consistency.
+        model["vacuity"] = self._assess_vacuity(model)
+
         return model
 
     @staticmethod
@@ -326,6 +341,63 @@ class Mace4Wrapper:
                 model["constants"][name] = values
             else:
                 model["functions"][name] = values
+
+    @staticmethod
+    def _assess_vacuity(model: dict[str, Any]) -> dict[str, Any]:
+        """Flag degenerate models that satisfy the premises only vacuously.
+
+        A universally-quantified conditional ``all x (P(x) -> Q(x))`` is
+        vacuously true whenever nothing satisfies ``P``.  Mace4 will happily
+        return a model in which every relation is false everywhere (the empty
+        world), and such a model satisfies almost any set of conditionals.
+        Reporting that as "consistent" is misleading: it establishes only that
+        the axioms are not outright contradictory over an empty universe, not
+        that they are jointly satisfiable by anything real.
+
+        This routine flags the degenerate case so callers can require a
+        non-trivial witness — e.g. by also asserting ``exists x (P(x))`` for
+        the entities their conditionals quantify over — and re-checking.
+
+        Args:
+            model: Parsed model dict (expects a ``predicates`` mapping of
+                ``name -> [truth values]``).
+
+        Returns:
+            Dict with ``is_vacuous`` (True iff predicates exist and none of
+            them holds anywhere), ``empty_predicates`` (false everywhere),
+            ``nonempty_predicates``, and — when vacuous — a human-readable
+            ``note``.
+        """
+        predicates: dict[str, list[str]] = model.get("predicates") or {}
+
+        def _is_empty(values: list[str]) -> bool:
+            # A relation is "empty" (false everywhere) when it has no tuples
+            # or every tuple value is false (Mace4 encodes false as 0).
+            falses = {"0", "false", "f"}
+            return not values or all(str(v).strip().lower() in falses for v in values)
+
+        empty = sorted(n for n, vals in predicates.items() if _is_empty(vals))
+        nonempty = sorted(n for n in predicates if n not in empty)
+
+        # Degenerate iff there ARE predicates and not one of them holds
+        # anywhere — i.e. the model carries no positive facts at all.
+        is_vacuous = bool(predicates) and not nonempty
+
+        assessment: dict[str, Any] = {
+            "is_vacuous": is_vacuous,
+            "empty_predicates": empty,
+            "nonempty_predicates": nonempty,
+        }
+        if is_vacuous:
+            assessment["note"] = (
+                "Degenerate model: every predicate is false everywhere (the "
+                "empty world). Universal conditionals are only VACUOUSLY "
+                "satisfied here, so this does not establish substantive "
+                "consistency. Assert existence for the entities your "
+                "conditionals quantify over (e.g. 'exists x (organism(x))') "
+                "and re-check."
+            )
+        return assessment
 
     async def find_model(
         self,
