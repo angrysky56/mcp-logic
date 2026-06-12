@@ -53,8 +53,10 @@ Add to your Claude Desktop MCP config (auto-generated at `claude-app-config.json
       "command": "uv",
       "args": [
         "--directory",
-        "/absolute/path/to/mcp-logic/src/mcp_logic",
+        "/absolute/path/to/mcp-logic",
         "run",
+        "python",
+        "-m",
         "mcp_logic",
         "--prover-path",
         "/absolute/path/to/mcp-logic/ladr/bin"

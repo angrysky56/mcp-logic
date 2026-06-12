@@ -152,7 +152,7 @@ echo # Expose ports - try multiple ports in case some are in use
 echo EXPOSE 8888 8889 8890 8891 8892
 echo.
 echo # Command to run the server
-echo CMD ["sh", "-c", "uv --directory /app/src/mcp_logic run mcp_logic --prover-path /app/ladr/bin"]
+echo CMD ["sh", "-c", "uv --directory /app run python -m mcp_logic --prover-path /app/ladr/bin"]
 ) > "%MCP_LOGIC_ROOT%\Dockerfile"
 
 :: Create Windows run script
@@ -210,8 +210,10 @@ echo     "mcp-logic": {
 echo       "command": "uv",
 echo       "args": [
 echo         "--directory", 
-echo         "%MCP_LOGIC_ROOT:\=/%/src/mcp_logic",
+echo         "%MCP_LOGIC_ROOT:\=/%",
 echo         "run", 
+echo         "python", 
+echo         "-m", 
 echo         "mcp_logic", 
 echo         "--prover-path", 
 echo         "%MCP_LOGIC_ROOT:\=/%/ladr/bin"

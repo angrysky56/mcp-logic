@@ -40,4 +40,4 @@ RUN echo '#!/bin/bash' > /usr/local/prover9-mount/prover9.exe && \
 ENV DOCKER_HOST=unix:///var/run/docker.sock
 
 # Command to run the server
-CMD ["sh", "-c", "uv --directory /app/src/mcp_logic run mcp_logic --prover-path /usr/local/prover9-mount"]
+CMD ["sh", "-c", "uv --directory /app run python -m mcp_logic --prover-path /usr/local/prover9-mount"]

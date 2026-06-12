@@ -199,7 +199,7 @@ ENV DOCKER_HOST=unix:///var/run/docker.sock
 EXPOSE 8888 8889 8890 8891 8892
 
 # Command to run the server
-CMD ["sh", "-c", "uv --directory /app/src/mcp_logic run mcp_logic --prover-path /usr/local/prover9-mount"]
+CMD ["sh", "-c", "uv --directory /app run python -m mcp_logic --prover-path /usr/local/prover9-mount"]
 EOF
 
 	# Create Linux run script
@@ -347,7 +347,7 @@ fi
 # Run the server
 echo "Starting MCP-Logic server..."
 cd "\$PROJECT_PATH"
-uv --directory "\$PROJECT_PATH/src/mcp_logic" run mcp_logic --prover-path "\$PROVER9_PATH"
+uv --directory "\$PROJECT_PATH" run python -m mcp_logic --prover-path "\$PROVER9_PATH"
 EOF
 
 	# Create Claude app config for direct non-Docker use
@@ -358,9 +358,11 @@ EOF
       "command": "uv",
       "args": [
         "--directory", 
-        "${MCP_LOGIC_ROOT}/src/mcp_logic",
+        "${MCP_LOGIC_ROOT}",
         "run", 
-        "mcp_logic", 
+        "python",
+        "-m",
+        "mcp_logic",
         "--prover-path", 
         "${MCP_LOGIC_ROOT}/ladr/bin"
       ]

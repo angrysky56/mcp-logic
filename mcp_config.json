@@ -4,8 +4,10 @@
       "command": "uv",
       "args": [
         "--directory",
-        "/your-path-to/mcp-logic/src/mcp_logic",
+        "/your-path-to/mcp-logic",
         "run",
+        "python",
+        "-m",
         "mcp_logic",
         "--prover-path",
         "/your-path-to/mcp-logic/ladr/bin"

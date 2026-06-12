@@ -27,6 +27,6 @@ if not exist "%PROJECT_PATH%.venv" (
 
 REM Run the server
 echo Starting MCP-Logic server...
-uv --directory "%PROJECT_PATH%src\mcp_logic" run mcp_logic --prover-path "%PROVER9_PATH%"
+uv --directory "%PROJECT_PATH%" run python -m mcp_logic --prover-path "%PROVER9_PATH%"
 
 endlocal
