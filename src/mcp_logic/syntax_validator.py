@@ -201,17 +201,142 @@ class SyntaxValidator:
             )
 
 
+def _symbol_arities(formula: str) -> list[tuple[str, int]]:
+    """Extract (symbol, arity) pairs for every applied symbol in a formula.
+
+    Argument counting is done at paren depth 1 relative to the symbol, so a
+    nested application like ``f(g(x, y), z)`` correctly reports ``f/2`` and
+    ``g/2`` rather than splitting on every comma. Commas inside list terms do
+    not count as arguments. Bare atoms and constants are recorded at arity 0.
+
+    Quantifier keywords and their bound variables are skipped: ``all x
+    (p(x))`` must not read either ``all`` or the grouping occurrence of ``x``
+    as an applied symbol.
+    """
+    bound_variables: set[str] = set()
+    for quantifier in re.finditer(r"\b(?:all|exists)\b", formula):
+        position = quantifier.end()
+        while True:
+            variable = re.match(r"\s*([A-Za-z_][A-Za-z0-9_]*)", formula[position:])
+            if not variable or variable.group(1) in SyntaxValidator.QUANTIFIERS:
+                break
+            name = variable.group(1)
+            position += variable.end()
+            # With an unparenthesized body (`all x p(x)`), the identifier
+            # immediately followed by `(` is the first predicate, not another
+            # quantified variable. A space before `(` instead marks the end of
+            # a declaration such as `all x y (p(x, y))`.
+            if formula[position:].startswith("("):
+                break
+            bound_variables.add(name)
+            if formula[position:].lstrip().startswith("("):
+                break
+
+    found: list[tuple[str, int]] = []
+    applications = list(re.finditer(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(", formula))
+    applied_name_starts = {match.start(1) for match in applications}
+    for match in applications:
+        symbol = match.group(1)
+        if symbol in SyntaxValidator.RESERVED or symbol in bound_variables:
+            continue
+        depth = 0
+        list_depth = 0
+        commas = 0
+        empty = True
+        for index in range(match.end() - 1, len(formula)):
+            char = formula[index]
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            elif depth == 1:
+                if char == "[":
+                    list_depth += 1
+                    empty = False
+                elif char == "]":
+                    list_depth = max(0, list_depth - 1)
+                elif char == "," and list_depth == 0:
+                    commas += 1
+                elif not char.isspace():
+                    empty = False
+        found.append((symbol, 0 if empty else commas + 1))
+
+    for identifier in re.finditer(r"\b([A-Za-z_][A-Za-z0-9_]*)\b", formula):
+        symbol = identifier.group(1)
+        if (
+            symbol in SyntaxValidator.RESERVED
+            or symbol in bound_variables
+            or identifier.start(1) in applied_name_starts
+            or (identifier.start(1) > 0 and formula[identifier.start(1) - 1] == "$")
+        ):
+            continue
+        found.append((symbol, 0))
+    return found
+
+
+def _check_set_consistency(formulas: list[str]) -> list[str]:
+    """Find defects that are only visible ACROSS a set of formulas.
+
+    Every other check in this module inspects one formula at a time, which
+    leaves a whole class of rejection invisible. The clearest case is arity:
+
+        exists x (biosynthetic_precursor(x))
+        exists x (biosynthetic_precursor(glutamate, glutamine))
+
+    Both are individually well-formed and this validator reported
+    ``valid: true`` for each. Prover9 rejects the pair, because a symbol must
+    have one fixed arity throughout — and it reports only "Syntax error or
+    invalid input", naming nothing.
+
+    Observed cost of the gap: an agent wrote exactly that pair, called
+    check_well_formed, was told the formulas were fine, and resubmitted the
+    identical set three times before the block was dropped from its analysis.
+    A validator that answers "valid" about a set the prover will refuse is
+    worse than no validator, because it redirects the search away from the
+    actual fault.
+    """
+    arities: dict[str, dict[int, str]] = {}
+    for formula in formulas:
+        for symbol, arity in _symbol_arities(formula):
+            seen = arities.setdefault(symbol, {})
+            seen.setdefault(arity, formula)
+
+    errors: list[str] = []
+    for symbol in sorted(arities):
+        seen = arities[symbol]
+        if len(seen) < 2:
+            continue
+        counts = ", ".join(str(a) for a in sorted(seen))
+        examples = "; ".join(f"arity {arity}: {seen[arity]}" for arity in sorted(seen))
+        errors.append(
+            f"Symbol '{symbol}' is used with inconsistent arity ({counts}). "
+            "Prover9 requires one fixed arity per symbol and will reject the "
+            f"whole set. Rename one use, or give the symbol a single arity. {examples}"
+        )
+    return errors
+
+
 def validate_formulas(formulas: list[str]) -> dict[str, Any]:
-    """Validate a list of formulas
+    """Validate a list of formulas, individually AND as a set.
 
     Args:
         formulas: List of formulas to validate
 
     Returns:
-        Dictionary with validation results
+        Dictionary with validation results. ``formula_results`` carries the
+        per-formula verdicts as before; ``set_errors`` carries defects that only
+        exist across formulas, and any such defect also clears the top-level
+        ``valid`` flag — a set the prover will refuse must never be reported as
+        valid, whatever each formula looks like on its own.
     """
     validator = SyntaxValidator()
-    results = {"valid": True, "formula_results": []}
+    results: dict[str, Any] = {
+        "valid": True,
+        "formula_results": [],
+        "set_errors": [],
+    }
 
     for formula in formulas:
         is_valid, errors, warnings = validator.validate(formula)
@@ -227,6 +352,11 @@ def validate_formulas(formulas: list[str]) -> dict[str, Any]:
 
         if not is_valid:
             results["valid"] = False
+
+    set_errors = _check_set_consistency(formulas)
+    if set_errors:
+        results["set_errors"] = set_errors
+        results["valid"] = False
 
     return results
 
