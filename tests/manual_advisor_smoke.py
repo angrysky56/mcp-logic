@@ -17,8 +17,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from mcp_logic.logic_advisor import LogicAdvisor  # noqa: E402
-from mcp_logic.server import _SolverBridge  # noqa: E402
 from mcp_logic.server import LogicEngine  # noqa: E402
+from mcp_logic.server import _SolverBridge  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
@@ -37,8 +37,7 @@ CASES: list[tuple[str, str]] = [
     ),
     (
         "propositional tautology",
-        "Is the formula 'p or not p' a tautology, a contradiction, or "
-        "contingent?",
+        "Is the formula 'p or not p' a tautology, a contradiction, or " "contingent?",
     ),
     (
         "satisfiability / model finding",

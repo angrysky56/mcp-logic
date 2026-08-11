@@ -320,9 +320,7 @@ class _SolverBridge:
             premises, conclusion, domain_size, timeout=timeout
         )
 
-    async def check_well_formed(
-        self, statements: list[str]
-    ) -> dict[str, Any]:
+    async def check_well_formed(self, statements: list[str]) -> dict[str, Any]:
         return validate_formulas(statements)
 
     async def check_contingency(self, formula: str) -> dict[str, Any]:
@@ -367,9 +365,7 @@ async def main(
     if no_advisor:
         logger.info("Logic advisor is DISABLED (--no-advisor flag)")
     else:
-        logger.info(
-            "Logic advisor enabled (model will lazy-load on first query)"
-        )
+        logger.info("Logic advisor enabled (model will lazy-load on first query)")
 
     server = Server("logic-manager")
 
@@ -1039,9 +1035,7 @@ async def main(
                     }
 
                 return [
-                    types.TextContent(
-                        type="text", text=json.dumps(response, indent=2)
-                    )
+                    types.TextContent(type="text", text=json.dumps(response, indent=2))
                 ]
 
             else:

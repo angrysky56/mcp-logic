@@ -60,6 +60,7 @@ setup-advisor.bat
 ```
 
 The script automatically:
+
 - **Detects your GPU** — CUDA on NVIDIA (Linux/Windows), Metal on Apple Silicon (macOS), or falls back to CPU
 - **Compiles `llama-cpp-python`** with the right acceleration backend
 - **Downloads the model** (~3.3 GB, one-time) to `~/.cache/mcp-logic/models/`
@@ -115,13 +116,13 @@ hf_hub_download('webAI-Official/TwIL-LM3', 'TwIL-LM3-Q8_0.gguf',
 
 ### Platform Compatibility
 
-| Platform | GPU Acceleration | Notes |
-|----------|-----------------|-------|
-| **Linux** (x86_64) | ✅ CUDA (NVIDIA) | Requires CUDA Toolkit + `nvidia-smi` |
-| **macOS** (Apple Silicon) | ✅ Metal | Native ARM64 Python recommended |
-| **macOS** (Intel) | ⚠️ Metal (limited) | Works but slower than Apple Silicon |
-| **Windows** (x86_64) | ✅ CUDA (NVIDIA) | Requires CUDA Toolkit + Visual Studio Build Tools |
-| **Any platform** | ✅ CPU | Always works, slower (~10-20s per query for 3B model) |
+| Platform                  | GPU Acceleration   | Notes                                                 |
+| ------------------------- | ------------------ | ----------------------------------------------------- |
+| **Linux** (x86_64)        | ✅ CUDA (NVIDIA)   | Requires CUDA Toolkit + `nvidia-smi`                  |
+| **macOS** (Apple Silicon) | ✅ Metal           | Native ARM64 Python recommended                       |
+| **macOS** (Intel)         | ⚠️ Metal (limited) | Works but slower than Apple Silicon                   |
+| **Windows** (x86_64)      | ✅ CUDA (NVIDIA)   | Requires CUDA Toolkit + Visual Studio Build Tools     |
+| **Any platform**          | ✅ CPU             | Always works, slower (~10-20s per query for 3B model) |
 
 ### Claude Desktop Integration
 
@@ -178,7 +179,8 @@ question: "Is it true that if all humans are mortal and Socrates is human,
 ```
 
 **Result:** The advisor translates to FOL, proves the theorem with Prover9, and returns:
-> *"Yes, Socrates is mortal. The proof follows from the universal premise that all humans are mortal, combined with the fact that Socrates is human."*
+
+> _"Yes, Socrates is mortal. The proof follows from the universal premise that all humans are mortal, combined with the fact that Socrates is human."_
 
 The response also includes the formalization it used and the raw solver output for transparency.
 
@@ -296,11 +298,11 @@ The `ask_logic_advisor` tool uses a 3-phase agentic pipeline:
 
 ### Resource Requirements
 
-| Scenario | VRAM | Inference Speed |
-|----------|------|-----------------|
-| NVIDIA GPU (CUDA) | ~3.5 GB | ~1-3s per LLM call |
-| Apple Silicon (Metal) | ~3.5 GB | ~2-5s per LLM call |
-| CPU-only | 0 (uses RAM) | ~10-20s per LLM call |
+| Scenario              | VRAM         | Inference Speed      |
+| --------------------- | ------------ | -------------------- |
+| NVIDIA GPU (CUDA)     | ~3.5 GB      | ~1-3s per LLM call   |
+| Apple Silicon (Metal) | ~3.5 GB      | ~2-5s per LLM call   |
+| CPU-only              | 0 (uses RAM) | ~10-20s per LLM call |
 
 ## What's New in v0.4.0
 

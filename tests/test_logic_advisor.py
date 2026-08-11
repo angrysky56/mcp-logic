@@ -469,9 +469,7 @@ class TestUnverifiedResults:
         _mock_llm_responses(
             advisor,
             [
-                json.dumps(
-                    {"tool": "prove", "premises": ["p"], "conclusion": "q"}
-                ),
+                json.dumps({"tool": "prove", "premises": ["p"], "conclusion": "q"}),
                 "Yes! Absolutely provable.",  # must NOT be used
             ],
         )
@@ -482,16 +480,12 @@ class TestUnverifiedResults:
         assert "Syntax error" in result.answer
 
     @pytest.mark.asyncio
-    async def test_successful_proof_is_verified(
-        self, fake_solver: FakeSolver
-    ) -> None:
+    async def test_successful_proof_is_verified(self, fake_solver: FakeSolver) -> None:
         advisor = _make_advisor(fake_solver)
         _mock_llm_responses(
             advisor,
             [
-                json.dumps(
-                    {"tool": "prove", "premises": ["p"], "conclusion": "p"}
-                ),
+                json.dumps({"tool": "prove", "premises": ["p"], "conclusion": "p"}),
                 "Yes, trivially.",
             ],
         )

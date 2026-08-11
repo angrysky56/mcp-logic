@@ -51,18 +51,18 @@ _FORMULA_STR_KEYS = ("conclusion", "formula")
 # crash the subprocess decode.  Order matters: multi-char before single-char.
 _SYNTAX_REWRITES: tuple[tuple[str, str], ...] = (
     # Unicode quantifiers and connectives.
-    ("∀", "all "),      # ∀
-    ("∃", "exists "),   # ∃
-    ("↔", "<->"),       # ↔
-    ("⇔", "<->"),       # ⇔
-    ("→", "->"),        # →
-    ("⇒", "->"),        # ⇒
-    ("∧", "&"),         # ∧
-    ("∨", "|"),         # ∨
-    ("¬", "-"),         # ¬
-    ("≠", "!="),        # ≠
-    ("⊥", "$F"),        # ⊥
-    ("⊤", "$T"),        # ⊤
+    ("∀", "all "),  # ∀
+    ("∃", "exists "),  # ∃
+    ("↔", "<->"),  # ↔
+    ("⇔", "<->"),  # ⇔
+    ("→", "->"),  # →
+    ("⇒", "->"),  # ⇒
+    ("∧", "&"),  # ∧
+    ("∨", "|"),  # ∨
+    ("¬", "-"),  # ¬
+    ("≠", "!="),  # ≠
+    ("⊥", "$F"),  # ⊥
+    ("⊤", "$T"),  # ⊤
     # ASCII variants from other proof-assistant dialects.
     ("<=>", "<->"),
     ("=>", "->"),
@@ -143,13 +143,9 @@ class SolverBackend(Protocol):
         timeout: int = 60,
     ) -> dict[str, Any]: ...
 
-    async def check_well_formed(
-        self, statements: list[str]
-    ) -> dict[str, Any]: ...
+    async def check_well_formed(self, statements: list[str]) -> dict[str, Any]: ...
 
-    async def check_contingency(
-        self, formula: str
-    ) -> dict[str, Any]: ...
+    async def check_contingency(self, formula: str) -> dict[str, Any]: ...
 
 
 # ── Result dataclass ────────────────────────────────────────────────────
@@ -372,7 +368,9 @@ class LogicAdvisor:
 
         if plan.get("tool") == "none":
             return AdvisorResult(
-                answer=plan.get("reason", "Unable to formalize this as a logic problem."),
+                answer=plan.get(
+                    "reason", "Unable to formalize this as a logic problem."
+                ),
                 formalization=plan,
                 solver_output={},
                 steps=steps,
@@ -571,9 +569,7 @@ class LogicAdvisor:
             f"## Why It Was Rejected\n{problem}\n\n"
             f"Produce a corrected JSON plan."
         )
-        raw = await self._llm_call(
-            system=_REPAIR_SYSTEM, user=prompt, max_tokens=1024
-        )
+        raw = await self._llm_call(system=_REPAIR_SYSTEM, user=prompt, max_tokens=1024)
         return normalize_plan(self._parse_plan(raw))
 
     # ── Private: Solver dispatch ────────────────────────────────────────
@@ -634,10 +630,7 @@ class LogicAdvisor:
         if text.startswith("```"):
             lines = text.split("\n")
             # Remove first line (```json) and last line (```)
-            lines = [
-                line for line in lines
-                if not line.strip().startswith("```")
-            ]
+            lines = [line for line in lines if not line.strip().startswith("```")]
             text = "\n".join(lines).strip()
 
         try:
