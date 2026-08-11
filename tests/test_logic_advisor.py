@@ -9,6 +9,7 @@ Two modes:
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 from unittest.mock import MagicMock
@@ -23,9 +24,11 @@ from mcp_logic.logic_advisor import (
     LogicAdvisor,
     _strip_think_blocks,
     infer_tool,
+    looks_arithmetic,
     normalize_plan,
     normalize_syntax,
     parse_formalization,
+    parse_smt_formalization,
 )
 
 # ── Fixtures ────────────────────────────────────────────────────────────
@@ -40,6 +43,17 @@ class FakeSolver:
         self.find_counterexample_calls: list[dict[str, Any]] = []
         self.check_well_formed_calls: list[dict[str, Any]] = []
         self.check_contingency_calls: list[dict[str, Any]] = []
+        self.prove_arithmetic_calls: list[dict[str, Any]] = []
+        self.check_satisfiable_calls: list[dict[str, Any]] = []
+
+        self.prove_arithmetic_result: dict[str, Any] = {
+            "result": "proved",
+            "reason": "The negated conclusion is unsatisfiable.",
+        }
+        self.check_satisfiable_result: dict[str, Any] = {
+            "result": "satisfiable",
+            "model": {"x": "3"},
+        }
 
         # Default canned responses.
         self.prove_result: dict[str, Any] = {
@@ -113,6 +127,31 @@ class FakeSolver:
         self.check_contingency_calls.append({"formula": formula})
         return self.check_contingency_result
 
+    async def prove_arithmetic(
+        self,
+        premises: list[str],
+        conclusion: str,
+        variables: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        self.prove_arithmetic_calls.append(
+            {
+                "premises": premises,
+                "conclusion": conclusion,
+                "variables": variables,
+            }
+        )
+        return self.prove_arithmetic_result
+
+    async def check_satisfiable(
+        self,
+        constraints: list[str],
+        variables: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        self.check_satisfiable_calls.append(
+            {"constraints": constraints, "variables": variables}
+        )
+        return self.check_satisfiable_result
+
 
 @pytest.fixture
 def fake_solver() -> FakeSolver:
@@ -123,12 +162,21 @@ def _make_advisor(
     solver: FakeSolver,
     *,
     enabled: bool = True,
+    cache_size: int = 0,
+    idle_unload_seconds: float | None = None,
 ) -> LogicAdvisor:
-    """Create a LogicAdvisor with the LLM mocked out."""
+    """Create a LogicAdvisor with the LLM mocked out.
+
+    Caching and idle unloading are off by default so the existing pipeline
+    tests exercise the real path every time; the tests that care about
+    those features opt in.
+    """
     return LogicAdvisor(
         solver=solver,
         model_path="/fake/model.gguf",
         enabled=enabled,
+        cache_size=cache_size,
+        idle_unload_seconds=idle_unload_seconds,
     )
 
 
@@ -658,6 +706,321 @@ class TestSolverErrorRepair:
         result = await advisor.solve("Does it follow?")
         assert result.verified is False
         assert "Sounds right" not in result.answer
+
+
+class TestCounterexampleRouting:
+    """An unprovable verdict should come with a concrete countermodel."""
+
+    @pytest.mark.asyncio
+    async def test_unprovable_triggers_countermodel_search(
+        self, fake_solver: FakeSolver
+    ) -> None:
+        fake_solver.prove_result = {
+            "result": "unprovable",
+            "reason": "Proof search exhausted.",
+        }
+        fake_solver.find_counterexample_result = {
+            "result": "model_found",
+            "domain_size": 2,
+            "model": {"cat": [True, False], "dog": [False, True]},
+        }
+        advisor = _make_advisor(fake_solver)
+        _mock_llm_responses(
+            advisor,
+            [
+                "PREMISE: all x (cat(x) -> animal(x))\n"
+                "PREMISE: exists x (animal(x) & dog(x))\n"
+                "GOAL: exists x (cat(x) & dog(x))",
+                "No — here is a world where no cat is a dog.",
+            ],
+        )
+
+        result = await advisor.solve("Does it follow that some cats are dogs?")
+
+        assert len(fake_solver.find_counterexample_calls) == 1
+        assert result.solver_output["countermodel"]["result"] == "model_found"
+        # Unprovable is a genuine verdict, so this stays verified.
+        assert result.verified is True
+
+    @pytest.mark.asyncio
+    async def test_proved_does_not_search_for_countermodel(
+        self, fake_solver: FakeSolver
+    ) -> None:
+        advisor = _make_advisor(fake_solver)
+        _mock_llm_responses(
+            advisor,
+            ["PREMISE: human(socrates)\nGOAL: mortal(socrates)", "Yes."],
+        )
+        await advisor.solve("Is Socrates mortal?")
+        assert fake_solver.find_counterexample_calls == []
+
+    @pytest.mark.asyncio
+    async def test_failed_countermodel_search_is_not_fatal(
+        self, fake_solver: FakeSolver
+    ) -> None:
+        fake_solver.prove_result = {"result": "unprovable", "reason": "exhausted"}
+        fake_solver.find_counterexample_result = {"error": "Mace4 not available"}
+        advisor = _make_advisor(fake_solver)
+        _mock_llm_responses(
+            advisor,
+            ["PREMISE: p\nGOAL: q", "No, it does not follow."],
+        )
+
+        result = await advisor.solve("Does q follow from p?")
+        assert "countermodel" not in result.solver_output
+        assert result.verified is True
+
+
+class TestAnswerCache:
+    """Repeat questions must not re-run the GPU."""
+
+    @pytest.mark.asyncio
+    async def test_repeat_question_served_from_cache(
+        self, fake_solver: FakeSolver
+    ) -> None:
+        advisor = _make_advisor(fake_solver, cache_size=8)
+        _mock_llm_responses(
+            advisor,
+            ["PREMISE: human(socrates)\nGOAL: mortal(socrates)", "Yes."],
+        )
+
+        first = await advisor.solve("Is Socrates mortal?")
+        second = await advisor.solve("Is Socrates mortal?")
+
+        assert second.answer == first.answer
+        assert "(served from cache)" in second.steps[-1]
+        # The solver ran exactly once.
+        assert len(fake_solver.prove_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_different_context_is_a_different_entry(
+        self, fake_solver: FakeSolver
+    ) -> None:
+        advisor = _make_advisor(fake_solver, cache_size=8)
+        _mock_llm_responses(
+            advisor,
+            [
+                "PREMISE: p\nGOAL: q",
+                "Yes.",
+                "PREMISE: p\nGOAL: q",
+                "Yes, given the context.",
+            ],
+        )
+
+        await advisor.solve("Does q follow?")
+        await advisor.solve("Does q follow?", context="assume p")
+        assert len(fake_solver.prove_calls) == 2
+
+    @pytest.mark.asyncio
+    async def test_use_cache_false_forces_a_fresh_solve(
+        self, fake_solver: FakeSolver
+    ) -> None:
+        advisor = _make_advisor(fake_solver, cache_size=8)
+        _mock_llm_responses(
+            advisor,
+            ["PREMISE: p\nGOAL: q", "Yes.", "PREMISE: p\nGOAL: q", "Yes again."],
+        )
+
+        await advisor.solve("Does q follow?")
+        await advisor.solve("Does q follow?", use_cache=False)
+        assert len(fake_solver.prove_calls) == 2
+
+    @pytest.mark.asyncio
+    async def test_cache_evicts_least_recently_used(
+        self, fake_solver: FakeSolver
+    ) -> None:
+        advisor = _make_advisor(fake_solver, cache_size=2)
+        _mock_llm_responses(advisor, [])  # every call falls through to "none"
+
+        await advisor.solve("q one")
+        await advisor.solve("q two")
+        await advisor.solve("q three")
+
+        assert len(advisor._cache) == 2
+        assert ("q one", "") not in advisor._cache
+
+    @pytest.mark.asyncio
+    async def test_clear_cache(self, fake_solver: FakeSolver) -> None:
+        advisor = _make_advisor(fake_solver, cache_size=8)
+        _mock_llm_responses(advisor, ["PREMISE: p\nGOAL: q", "Yes."])
+        await advisor.solve("Does q follow?")
+        advisor.clear_cache()
+        assert len(advisor._cache) == 0
+
+
+class TestIdleUnload:
+    """VRAM should not stay pinned indefinitely."""
+
+    @pytest.mark.asyncio
+    async def test_model_released_after_idle_window(
+        self, fake_solver: FakeSolver
+    ) -> None:
+        advisor = _make_advisor(fake_solver, idle_unload_seconds=0.05)
+        _mock_llm_responses(advisor, ["PREMISE: p\nGOAL: q", "Yes."])
+
+        await advisor.solve("Does q follow?")
+        assert advisor.loaded is True
+
+        await asyncio.sleep(0.15)
+        assert advisor.loaded is False
+
+    @pytest.mark.asyncio
+    async def test_activity_postpones_the_unload(self, fake_solver: FakeSolver) -> None:
+        advisor = _make_advisor(fake_solver, idle_unload_seconds=0.2)
+        _mock_llm_responses(advisor, [])
+
+        await advisor.solve("first")
+        await asyncio.sleep(0.1)
+        await advisor.solve("second", use_cache=False)
+        await asyncio.sleep(0.1)
+        # 0.2s total elapsed, but the timer restarted at 0.1s.
+        assert advisor.loaded is True
+
+    @pytest.mark.asyncio
+    async def test_disabled_idle_unload_keeps_model(
+        self, fake_solver: FakeSolver
+    ) -> None:
+        advisor = _make_advisor(fake_solver, idle_unload_seconds=None)
+        _mock_llm_responses(advisor, ["PREMISE: p\nGOAL: q", "Yes."])
+        await advisor.solve("Does q follow?")
+        await asyncio.sleep(0.1)
+        assert advisor.loaded is True
+
+    @pytest.mark.asyncio
+    async def test_unload_cancels_the_timer(self, fake_solver: FakeSolver) -> None:
+        advisor = _make_advisor(fake_solver, idle_unload_seconds=10.0)
+        _mock_llm_responses(advisor, ["PREMISE: p\nGOAL: q", "Yes."])
+        await advisor.solve("Does q follow?")
+        await advisor.unload()
+        assert advisor._idle_task is None
+        assert advisor.loaded is False
+
+
+class TestArithmeticRouting:
+    """Numeric questions must reach Z3, not Prover9."""
+
+    @pytest.mark.parametrize(
+        "question",
+        [
+            "If x is greater than 0, is 2x greater than x?",
+            "Alice is at least 18. Is she at least 16?",
+            "Is the sum of two even numbers even?",
+            "Is there a number between 0 and 10 divisible by 3?",
+        ],
+    )
+    def test_arithmetic_detected(self, question: str) -> None:
+        assert looks_arithmetic(question) is True
+
+    @pytest.mark.parametrize(
+        "question",
+        [
+            "All humans are mortal. Socrates is a human. Is Socrates mortal?",
+            "All cats are animals. Some animals are dogs. Do cats bark?",
+            "Is p or not p a tautology?",
+            "What is your favourite colour?",
+            # Regression: quantifier phrasing that merely sounds numeric.
+            "Find a model where there exist at least two distinct elements.",
+            "Is there at most one largest element in this ordering?",
+            "Every number-crunching machine is a machine. Is that valid?",
+        ],
+    )
+    def test_non_arithmetic_stays_on_prover9(self, question: str) -> None:
+        assert looks_arithmetic(question) is False
+
+    def test_smt_lines_become_entailment_plan(self) -> None:
+        raw = "VAR: x Int\nPREMISE: (> x 0)\nGOAL: (> (* 2 x) x)"
+        plan = parse_smt_formalization(raw)
+        assert plan["tool"] == "prove_arithmetic"
+        assert plan["variables"] == {"x": "Int"}
+        assert plan["conclusion"] == "(> (* 2 x) x)"
+
+    def test_smt_lines_without_goal_become_satisfiability(self) -> None:
+        raw = "VAR: n Int\nPREMISE: (> n 0)\nPREMISE: (< n 10)"
+        plan = parse_smt_formalization(raw)
+        assert plan["tool"] == "check_satisfiable"
+        assert len(plan["constraints"]) == 2
+
+    def test_smt_garbage_is_none(self) -> None:
+        assert parse_smt_formalization("NONE")["tool"] == "none"
+
+    def test_missing_var_lines_are_recovered(self) -> None:
+        # The model routinely omits VAR: lines; Z3 would reject the script.
+        plan = parse_smt_formalization("PREMISE: (> x 0)\nGOAL: (> (* 2 x) x)")
+        assert plan["variables"] == {"x": "Int"}
+
+    def test_declared_sorts_win_over_inference(self) -> None:
+        plan = parse_smt_formalization("VAR: x Real\nPREMISE: (> x 0)\nGOAL: (> x -1)")
+        assert plan["variables"]["x"] == "Real"
+
+    def test_decimal_literals_infer_real(self) -> None:
+        plan = parse_smt_formalization("PREMISE: (> price 0.5)")
+        assert plan["variables"]["price"] == "Real"
+
+    def test_operators_are_not_mistaken_for_variables(self) -> None:
+        plan = parse_smt_formalization("PREMISE: (and (> n 0) (not (= (mod n 3) 1)))")
+        assert set(plan["variables"]) == {"n"}
+
+    @pytest.mark.asyncio
+    async def test_pipeline_routes_arithmetic_to_z3(
+        self, fake_solver: FakeSolver
+    ) -> None:
+        advisor = _make_advisor(fake_solver)
+        _mock_llm_responses(
+            advisor,
+            [
+                "VAR: x Int\nPREMISE: (> x 0)\nGOAL: (> (* 2 x) x)",
+                "Yes, doubling a positive number always makes it larger.",
+            ],
+        )
+
+        result = await advisor.solve("If x is greater than 0, is 2x greater than x?")
+
+        assert result.verified is True
+        assert len(fake_solver.prove_arithmetic_calls) == 1
+        # Prover9 must not have been handed an arithmetic question.
+        assert fake_solver.prove_calls == []
+
+    @pytest.mark.asyncio
+    async def test_smt_syntax_is_not_mangled_by_prover9_rewrites(
+        self, fake_solver: FakeSolver
+    ) -> None:
+        # `=>` is SMT-LIB implication; the Prover9 normalizer rewrites it
+        # to `->`, which Z3 does not understand.
+        advisor = _make_advisor(fake_solver)
+        _mock_llm_responses(
+            advisor,
+            [
+                "VAR: x Int\nPREMISE: (=> (> x 0) (>= x 1))\nGOAL: (>= x 0)",
+                "Yes.",
+            ],
+        )
+
+        await advisor.solve("If x > 0 then is x >= 0?")
+        assert fake_solver.prove_arithmetic_calls[0]["premises"] == [
+            "(=> (> x 0) (>= x 1))"
+        ]
+
+    @pytest.mark.asyncio
+    async def test_z3_unknown_is_reported_unverified(
+        self, fake_solver: FakeSolver
+    ) -> None:
+        fake_solver.prove_arithmetic_result = {
+            "result": "unknown",
+            "reason": "Z3 could not decide (incomplete quantifiers).",
+        }
+        advisor = _make_advisor(fake_solver)
+        _mock_llm_responses(
+            advisor,
+            [
+                "VAR: x Int\nPREMISE: (> x 0)\nGOAL: (> (* x x x) 0)",
+                "Sure, definitely true!",  # must not surface
+            ],
+        )
+
+        result = await advisor.solve("Is x cubed positive when x is above 0?")
+        assert result.verified is False
+        assert "Sure, definitely" not in result.answer
+        assert "could not decide" in result.answer
 
 
 class TestUnterminatedThinkBlock:

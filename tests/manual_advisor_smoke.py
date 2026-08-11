@@ -45,6 +45,18 @@ CASES: list[tuple[str, str]] = [
         "its own successor.",
     ),
     (
+        "arithmetic entailment (Z3 route)",
+        "If x is an integer greater than 0, is 2 times x greater than x?",
+    ),
+    (
+        "arithmetic refutation (Z3 route)",
+        "Alice's age is greater than 0. Does it follow that her age is over 50?",
+    ),
+    (
+        "arithmetic satisfiability (Z3 route)",
+        "Is there an integer between 0 and 10 that is divisible by 3?",
+    ),
+    (
         "nonsense input (should degrade gracefully)",
         "What is your favourite colour?",
     ),

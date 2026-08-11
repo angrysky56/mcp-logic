@@ -29,6 +29,7 @@ from mcp_logic.hcc_prover import check_contingency
 # Import new modules
 from mcp_logic.logic_advisor import AdvisorDisabledError, LogicAdvisor
 from mcp_logic.mace4_wrapper import Mace4Wrapper
+from mcp_logic.smt_solver import check_entailment, check_satisfiable, z3_available
 from mcp_logic.syntax_validator import normalize_formula, validate_formulas
 from mcp_logic.vfe_engine import abductive_explain, abductive_explain_fol
 
@@ -323,6 +324,27 @@ class _SolverBridge:
     async def check_well_formed(self, statements: list[str]) -> dict[str, Any]:
         return validate_formulas(statements)
 
+    async def prove_arithmetic(
+        self,
+        premises: list[str],
+        conclusion: str,
+        variables: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        if not z3_available():
+            return {"error": "z3-solver is not installed"}
+        return await asyncio.to_thread(
+            check_entailment, premises, conclusion, variables or {}
+        )
+
+    async def check_satisfiable(
+        self,
+        constraints: list[str],
+        variables: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        if not z3_available():
+            return {"error": "z3-solver is not installed"}
+        return await asyncio.to_thread(check_satisfiable, constraints, variables or {})
+
     async def check_contingency(self, formula: str) -> dict[str, Any]:
         res = check_contingency(formula)
         return {
@@ -569,6 +591,92 @@ async def main(
                         }
                     },
                     "required": ["formula"],
+                },
+            ),
+            types.Tool(
+                name="prove_arithmetic",
+                description=(
+                    "Prove or refute a claim involving ARITHMETIC, using the Z3 "
+                    "SMT solver. Use this instead of 'prove' whenever numbers "
+                    "are involved — Prover9 has no theory of arithmetic and "
+                    "cannot decide that 2+2=4 or that x+1 > x. Constraints are "
+                    "SMT-LIB prefix notation: (> x 0), (= y (+ x 1)), "
+                    "(=> (> x 0) (>= x 1)). Declare every variable in "
+                    "'variables' with sort Int, Real or Bool. Returns 'proved', "
+                    "or 'counterexample' with concrete values that break the "
+                    "claim, or 'unknown' if Z3 could not decide. Example: "
+                    "premises=['(> x 0)'], conclusion='(> (* x 2) x)', "
+                    "variables={'x': 'Int'}."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "premises": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "SMT-LIB assertions taken as given",
+                        },
+                        "conclusion": {
+                            "type": "string",
+                            "description": "SMT-LIB assertion to prove",
+                        },
+                        "variables": {
+                            "type": "object",
+                            "description": (
+                                "Variable name -> sort (Int, Real or Bool), "
+                                "e.g. {'x': 'Int', 'y': 'Real'}"
+                            ),
+                        },
+                        "functions": {
+                            "type": "object",
+                            "description": (
+                                "Optional uninterpreted functions, name -> "
+                                "[arg sorts..., result sort], e.g. "
+                                "{'succ': ['Int', 'Int']}"
+                            ),
+                        },
+                        "timeout_ms": {
+                            "type": "integer",
+                            "description": "Solver timeout in ms (default 10000)",
+                        },
+                    },
+                    "required": ["premises", "conclusion"],
+                },
+            ),
+            types.Tool(
+                name="check_satisfiable",
+                description=(
+                    "Ask Z3 whether a set of ARITHMETIC constraints can all be "
+                    "true at once, and get a concrete satisfying assignment if "
+                    "so. Use for consistency checks, puzzles and scheduling-"
+                    "style problems over numbers. Same SMT-LIB prefix notation "
+                    "as prove_arithmetic. Returns 'satisfiable' with a model, "
+                    "'unsatisfiable', or 'unknown'. Example: "
+                    "constraints=['(> x 0)', '(< x 10)', '(= (mod x 3) 0)'], "
+                    "variables={'x': 'Int'}."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "constraints": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "SMT-LIB assertions to satisfy together",
+                        },
+                        "variables": {
+                            "type": "object",
+                            "description": "Variable name -> sort (Int, Real, Bool)",
+                        },
+                        "functions": {
+                            "type": "object",
+                            "description": "Optional uninterpreted function decls",
+                        },
+                        "timeout_ms": {
+                            "type": "integer",
+                            "description": "Solver timeout in ms (default 10000)",
+                        },
+                    },
+                    "required": ["constraints"],
                 },
             ),
             types.Tool(
@@ -988,6 +1096,48 @@ async def main(
                         for c in res.all_candidates
                     ],
                 }
+                return [
+                    types.TextContent(type="text", text=json.dumps(result, indent=2))
+                ]
+
+            elif name in {"prove_arithmetic", "check_satisfiable"}:
+                if not z3_available():
+                    return [
+                        types.TextContent(
+                            type="text",
+                            text=json.dumps(
+                                {
+                                    "error": "z3-solver is not installed",
+                                    "hint": (
+                                        "Install it with: uv pip install "
+                                        "z3-solver — or use prove/find_model "
+                                        "for non-arithmetic questions."
+                                    ),
+                                },
+                                indent=2,
+                            ),
+                        )
+                    ]
+
+                shared = {
+                    "variables": arguments.get("variables") or {},
+                    "functions": arguments.get("functions") or {},
+                    "timeout_ms": int(arguments.get("timeout_ms", 10_000)),
+                }
+                if name == "prove_arithmetic":
+                    result = await asyncio.to_thread(
+                        check_entailment,
+                        arguments.get("premises", []),
+                        arguments.get("conclusion", ""),
+                        **shared,
+                    )
+                else:
+                    result = await asyncio.to_thread(
+                        check_satisfiable,
+                        arguments.get("constraints", []),
+                        **shared,
+                    )
+
                 return [
                     types.TextContent(type="text", text=json.dumps(result, indent=2))
                 ]

@@ -21,12 +21,16 @@ and VRAM waste when clients don't need the advisor.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import re
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
+
+from mcp_logic.syntax_contract import PROVER9_SYNTAX_RULES
 
 if TYPE_CHECKING:
     pass
@@ -59,6 +63,15 @@ _REPEAT_PENALTY = 1.0
 # Eval protocol uses max_seq_len 8192; 4096 leaves no room for prompt +
 # reasoning + answer at a 2048-token budget.
 _DEFAULT_N_CTX = 8192
+
+#: Answers are deterministic (greedy decoding), so a repeat question can be
+#: served from memory instead of re-running the GPU.
+_DEFAULT_CACHE_SIZE = 128
+
+#: Drop the model out of VRAM after this long without a query. ~3.3 GB is a
+#: lot to hold for a tool that may be used a few times an hour, and idle
+#: VRAM still costs heat.  ``None`` keeps it resident forever.
+_DEFAULT_IDLE_UNLOAD_SECONDS = 600.0
 
 # Keys in a plan whose values are formula text needing normalization.
 _FORMULA_LIST_KEYS = ("premises", "statements")
@@ -166,6 +179,19 @@ class SolverBackend(Protocol):
 
     async def check_contingency(self, formula: str) -> dict[str, Any]: ...
 
+    async def prove_arithmetic(
+        self,
+        premises: list[str],
+        conclusion: str,
+        variables: dict[str, str] | None = None,
+    ) -> dict[str, Any]: ...
+
+    async def check_satisfiable(
+        self,
+        constraints: list[str],
+        variables: dict[str, str] | None = None,
+    ) -> dict[str, Any]: ...
+
 
 # ── Result dataclass ────────────────────────────────────────────────────
 @dataclass(frozen=True)
@@ -242,6 +268,9 @@ Rules:
 - Then briefly explain the proof or counterexample.
 - If a proof was found, summarize the key steps.
 - If a counterexample was found, describe the model that disproves it.
+- If the output contains a "countermodel", the conclusion does NOT follow:
+  say so, then describe that concrete world in plain language — it is the
+  most useful part of the answer.
 - If the solver failed or timed out, explain why and suggest what to try next.
 - Keep it under 200 words unless the proof is genuinely complex.
 - Reference the original question in your answer.
@@ -263,14 +292,8 @@ GOAL: <formula>         (the conclusion, only for prove/find_counterexample)
 FORMULA: <formula>      (only for check_contingency)
 DOMAIN: <integer>       (optional, only for find_model)
 
-## Prover9 syntax — ASCII only
-- Universal:   all x (human(x) -> mortal(x))
-- Existential: exists x (pet(x) & dog(x))
-- Connectives: -> implies, <-> iff, & and, | or, - not
-- Predicates, functions and constants are lowercase: human(x), socrates
-- Variables are lowercase letters: x, y, z
-- Equality =, inequality !=
-- Quantifiers MUST be parenthesized. No trailing period.
+## Prover9 syntax
+{syntax_rules}
 
 ## Examples
 
@@ -304,6 +327,53 @@ PREMISE: all x (-succ(x,x))
 
 If the question is not a logic problem at all, output exactly:
 NONE
+""".format(syntax_rules=PROVER9_SYNTAX_RULES)
+
+_SMT_FORMALIZE_SYSTEM = """\
+You are an SMT-LIB translator. The question involves ARITHMETIC, so \
+translate it into SMT-LIB assertions for the Z3 solver.
+
+## Output format — one item per line, nothing else
+VAR: <name> <Int|Real|Bool>    (declare every variable you use)
+PREMISE: <assertion>           (one line per premise; omit if none)
+GOAL: <assertion>              (the claim to check; omit for pure "is this possible" questions)
+
+## SMT-LIB syntax — PREFIX notation, operator first
+- Comparison: (> x 0)  (<= x y)  (= x 3)
+- Arithmetic: (+ x 1)  (* 2 x)  (- x y)  (mod x 3)
+- Logic: (and a b)  (or a b)  (not a)  (=> a b)
+- Numbers are bare: 0, 1, 42. Reals need a decimal point: 0.0, 1.5
+
+## Examples
+
+Question: If x is a positive integer, is 2x greater than x?
+VAR: x Int
+PREMISE: (> x 0)
+GOAL: (> (* 2 x) x)
+
+Question: Alice is at least 18. Is she at least 16?
+VAR: age Int
+PREMISE: (>= age 18)
+GOAL: (>= age 16)
+
+Question: Is there a number between 0 and 10 divisible by 3?
+VAR: n Int
+PREMISE: (> n 0)
+PREMISE: (< n 10)
+PREMISE: (= (mod n 3) 0)
+
+## Rules
+
+1. TRANSLATE, DO NOT ANSWER — the solver decides.
+2. Never write infix like "x > 0"; write "(> x 0)".
+3. NEVER use `exists` or `forall`. To ask whether some number satisfies
+   constraints, declare it with VAR: and assert the constraints directly.
+   For "is there an n between 0 and 10 divisible by 3", write
+   `VAR: n Int` / `PREMISE: (> n 0)` / `PREMISE: (< n 10)` /
+   `PREMISE: (= (mod n 3) 0)` — NOT `exists n (...)`.
+4. Declare every variable you use with a VAR: line.
+
+If it is not an arithmetic question, output NONE.
 """
 
 _REPAIR_SYSTEM = """\
@@ -369,6 +439,8 @@ class LogicAdvisor:
         n_ctx: int = _DEFAULT_N_CTX,
         *,
         enabled: bool = True,
+        cache_size: int = _DEFAULT_CACHE_SIZE,
+        idle_unload_seconds: float | None = _DEFAULT_IDLE_UNLOAD_SECONDS,
     ) -> None:
         self._solver = solver
         self._model: Any | None = None
@@ -377,6 +449,15 @@ class LogicAdvisor:
         self._n_ctx = n_ctx
         self._enabled = enabled
         self._load_lock = asyncio.Lock()
+        # One llama.cpp context, and every call now clears its KV cache
+        # first.  Two overlapping requests would therefore reset each
+        # other's state mid-generation, so inference is serialised.  MCP
+        # servers handle requests concurrently, so this is reachable.
+        self._inference_lock = asyncio.Lock()
+        self._cache_size = cache_size
+        self._cache: OrderedDict[tuple[str, str], AdvisorResult] = OrderedDict()
+        self._idle_unload_seconds = idle_unload_seconds
+        self._idle_task: asyncio.Task[None] | None = None
 
     # ── Properties ──────────────────────────────────────────────────────
 
@@ -414,18 +495,60 @@ class LogicAdvisor:
         self,
         question: str,
         context: str = "",
+        *,
+        use_cache: bool = True,
     ) -> AdvisorResult:
         """Solve a logic problem end-to-end.
+
+        Repeat questions are served from an in-memory cache.  Decoding is
+        greedy, so re-running an identical question would produce an
+        identical answer at the cost of several seconds of GPU time.
 
         Args:
             question: Natural-language logic question from the client.
             context: Optional context (background knowledge, constraints,
                 previous solver output to debug, etc.).
+            use_cache: Set ``False`` to force a fresh solve.
 
         Returns:
             :class:`AdvisorResult` with the answer, formalization, and
             raw solver output.
         """
+        key = (question, context)
+
+        if use_cache and key in self._cache:
+            self._cache.move_to_end(key)
+            cached = self._cache[key]
+            self._touch_idle_timer()
+            return AdvisorResult(
+                answer=cached.answer,
+                formalization=cached.formalization,
+                solver_output=cached.solver_output,
+                steps=[*cached.steps, "(served from cache)"],
+                verified=cached.verified,
+            )
+
+        result = await self._solve_uncached(question, context)
+
+        if use_cache and self._cache_size > 0:
+            self._cache[key] = result
+            self._cache.move_to_end(key)
+            while len(self._cache) > self._cache_size:
+                self._cache.popitem(last=False)
+
+        self._touch_idle_timer()
+        return result
+
+    def clear_cache(self) -> None:
+        """Forget every cached answer."""
+        self._cache.clear()
+
+    async def _solve_uncached(
+        self,
+        question: str,
+        context: str = "",
+    ) -> AdvisorResult:
+        """Run the full pipeline, ignoring the cache."""
         await self.ensure_model()
         steps: list[str] = []
 
@@ -435,19 +558,34 @@ class LogicAdvisor:
         if context:
             user_msg = f"{question}\n\n### Context\n{context}"
 
-        # ONE narrow call, shaped like the model's training task: translate
-        # the question into labelled formula lines.  The tool is then derived
-        # from what came back rather than asked for separately — measured
-        # 3/9 solver-accepted for "emit a JSON plan" against 9/9 for
-        # translation, and a separate tool-naming call returned "none" every
-        # time because the model thinks before answering.
-        lines = await self._llm_call(
-            system=_FORMALIZE_LINES_SYSTEM,
-            user=user_msg,
-            max_tokens=_DEFAULT_MAX_TOKENS,
-        )
-
-        plan = normalize_plan(parse_formalization(lines, question=question))
+        # Arithmetic goes to Z3, everything else to Prover9/Mace4.  Prover9
+        # has no theory of arithmetic at all, so a numeric question sent
+        # there does not fail loudly — it grinds or rejects the syntax.
+        arithmetic = looks_arithmetic(question)
+        if arithmetic:
+            steps.append("Question looks arithmetic — routing to Z3.")
+            lines = await self._llm_call(
+                system=_SMT_FORMALIZE_SYSTEM,
+                user=user_msg,
+                max_tokens=_DEFAULT_MAX_TOKENS,
+            )
+            # SMT-LIB is already the target syntax; the Prover9 rewrites
+            # would corrupt it (`->` is not an SMT operator).
+            plan = parse_smt_formalization(lines)
+        else:
+            # ONE narrow call, shaped like the model's training task:
+            # translate the question into labelled formula lines.  The tool
+            # is derived from what came back rather than asked for
+            # separately — measured 3/9 solver-accepted for "emit a JSON
+            # plan" against 9/9 for translation, and a separate tool-naming
+            # call returned "none" every time because the model thinks
+            # before answering.
+            lines = await self._llm_call(
+                system=_FORMALIZE_LINES_SYSTEM,
+                user=user_msg,
+                max_tokens=_DEFAULT_MAX_TOKENS,
+            )
+            plan = normalize_plan(parse_formalization(lines, question=question))
         steps.append(f"Formalization: {json.dumps(plan, indent=2)}")
 
         if plan.get("tool") == "none":
@@ -525,6 +663,17 @@ class LogicAdvisor:
                     f"{json.dumps(solver_output, indent=2)[:500]}"
                 )
 
+        if _is_undecided(solver_output):
+            reason = solver_output.get("reason", "the solver could not decide")
+            steps.append(f"Solver returned no verdict: {reason}")
+            return AdvisorResult(
+                answer=f"{_UNVERIFIED_NOTICE}\n\n{reason}",
+                formalization=plan,
+                solver_output=solver_output,
+                steps=steps,
+                verified=False,
+            )
+
         # A solver error means there is no verdict to interpret.  Letting the
         # LLM answer anyway produces a confident, unverified guess — exactly
         # the failure this tool exists to prevent.
@@ -546,6 +695,23 @@ class LogicAdvisor:
                 steps=steps,
                 verified=False,
             )
+
+        # ── Phase 2c: Turn "unprovable" into a concrete countermodel ────
+        # "The conclusion does not follow" is a real verdict but an
+        # unsatisfying one.  Mace4 can usually exhibit a world where the
+        # premises hold and the conclusion fails, which turns a bare "No"
+        # into something the user can inspect and argue with.
+        if plan.get("tool") == "prove" and solver_output.get("result") == "unprovable":
+            steps.append("Unprovable — asking Mace4 for a countermodel...")
+            counter = await self._solver.find_counterexample(
+                premises=plan.get("premises", []),
+                conclusion=plan.get("conclusion", ""),
+            )
+            if not _is_solver_error(counter):
+                solver_output = {**solver_output, "countermodel": counter}
+                steps.append(
+                    f"Countermodel search: {counter.get('result', 'no result')}"
+                )
 
         # ── Phase 3: Interpret ──────────────────────────────────────────
         steps.append("Phase 3: Interpreting results with TwIL-LM3...")
@@ -583,9 +749,51 @@ class LogicAdvisor:
 
     async def unload(self) -> None:
         """Release the model from memory."""
+        if self._idle_task is not None:
+            self._idle_task.cancel()
+            self._idle_task = None
         if self._model is not None:
             logger.info("Unloading logic advisor model from memory")
             self._model = None
+
+    # ── Private: idle unloading ─────────────────────────────────────────
+
+    def _touch_idle_timer(self) -> None:
+        """Restart the idle countdown after activity.
+
+        The model is ~3.3 GB of VRAM and this tool may go untouched for long
+        stretches, so it is dropped after a quiet period and lazily reloaded
+        on the next query (about a second from page cache).
+        """
+        if self._idle_unload_seconds is None:
+            return
+
+        if self._idle_task is not None:
+            self._idle_task.cancel()
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:  # pragma: no cover - no loop outside async use
+            return
+
+        self._idle_task = loop.create_task(self._unload_after_idle())
+
+    async def _unload_after_idle(self) -> None:
+        """Wait out the idle window, then release the model."""
+        idle_seconds = self._idle_unload_seconds
+        if idle_seconds is None:  # pragma: no cover - guarded by the caller
+            return
+
+        with contextlib.suppress(asyncio.CancelledError):
+            await asyncio.sleep(idle_seconds)
+            async with self._inference_lock:
+                if self._model is not None:
+                    logger.info(
+                        "Advisor idle for %.0fs — unloading model from memory",
+                        idle_seconds,
+                    )
+                    self._model = None
+            self._idle_task = None
 
     # ── Private: LLM ────────────────────────────────────────────────────
 
@@ -603,12 +811,13 @@ class LogicAdvisor:
         ]
         logger.debug("LLM call (max_tokens=%d): %s", max_tokens, user[:200])
 
-        response = await asyncio.to_thread(
-            self._create_chat_completion,
-            messages,
-            max_tokens,
-            temperature,
-        )
+        async with self._inference_lock:
+            response = await asyncio.to_thread(
+                self._create_chat_completion,
+                messages,
+                max_tokens,
+                temperature,
+            )
         raw = response["choices"][0]["message"]["content"]
         cleaned = _strip_think_blocks(raw)
         logger.debug("LLM response (%d chars): %s", len(cleaned), cleaned[:300])
@@ -626,6 +835,11 @@ class LogicAdvisor:
             A human-readable error string, or ``None`` if the plan's
             formulas are well formed (or carry nothing to check).
         """
+        # SMT plans are SMT-LIB, not Prover9 — the first-order validator
+        # would reject every one of them.  Z3's own parser is the check.
+        if plan.get("tool") in _SMT_TOOLS:
+            return None
+
         formulas = self._plan_formulas(plan)
         if not formulas:
             return None
@@ -676,17 +890,23 @@ class LogicAdvisor:
         mid-pipeline is what the ablation showed it handles worst.
         """
         tool = str(bad_plan.get("tool", "prove"))
+        is_smt = tool in _SMT_TOOLS
+        syntax = "SMT-LIB prefix" if is_smt else "Prover9"
         prompt = (
             f"## Original Question\n{original_question}\n\n"
             f"## Rejected Translation\n{_plan_to_lines(bad_plan)}\n\n"
             f"## Why It Was Rejected\n{problem}\n\n"
-            f"Write the corrected lines. Every formula must be Prover9 syntax, "
-            f"never English."
+            f"Write the corrected lines. Every formula must be {syntax} "
+            f"syntax, never English."
         )
         raw = await self._llm_call(
-            system=_FORMALIZE_LINES_SYSTEM, user=prompt, max_tokens=_DEFAULT_MAX_TOKENS
+            system=_SMT_FORMALIZE_SYSTEM if is_smt else _FORMALIZE_LINES_SYSTEM,
+            user=prompt,
+            max_tokens=_DEFAULT_MAX_TOKENS,
         )
-        return normalize_plan(parse_formalization(raw, tool))
+        if is_smt:
+            return parse_smt_formalization(raw)
+        return normalize_plan(parse_formalization(raw, tool=tool))
 
     # ── Private: Solver dispatch ────────────────────────────────────────
 
@@ -722,6 +942,19 @@ class LogicAdvisor:
             elif tool == "check_well_formed":
                 return await self._solver.check_well_formed(
                     statements=plan.get("statements", []),
+                )
+
+            elif tool == "prove_arithmetic":
+                return await self._solver.prove_arithmetic(
+                    premises=plan.get("premises", []),
+                    conclusion=plan.get("conclusion", ""),
+                    variables=plan.get("variables", {}),
+                )
+
+            elif tool == "check_satisfiable":
+                return await self._solver.check_satisfiable(
+                    constraints=plan.get("constraints", []),
+                    variables=plan.get("variables", {}),
                 )
 
             else:
@@ -901,6 +1134,8 @@ class LogicAdvisor:
                 break
 
 
+_SMT_TOOLS = frozenset({"prove_arithmetic", "check_satisfiable"})
+
 _VALID_TOOLS = frozenset(
     {
         "prove",
@@ -1047,10 +1282,154 @@ def parse_formalization(raw: str, question: str = "", tool: str = "") -> dict[st
     return plan
 
 
+# Prover9 has no theory of arithmetic, so numeric questions must go to Z3
+# instead.  Deliberately conservative: a false positive sends a perfectly
+# good syllogism down the SMT path, which is worse than missing one.
+_ARITHMETIC_RE = re.compile(
+    r"\d"  # any digit — covers "x > 0", "at least 18", "2x"
+    r"|\b(sum|product|divisible|divides|multiple of|remainder|modulo|"
+    r"even|odd|prime|percent|average|squared|plus|minus|"
+    r"greater than|less than|add(s|ed)?|subtract|multiply|divide)\b"
+    r"|[+*]",
+    re.IGNORECASE,
+)
+# Deliberately NOT included: "number", "integer", "at least", "at most".
+# Those appear constantly in ordinary quantifier questions — "at least two
+# distinct elements" is model finding, not arithmetic — and a false positive
+# sends a perfectly good first-order question to a solver that cannot parse
+# it. Anything genuinely numeric carries a digit or an operator anyway.
+
+# "VAR: x Int" → ("x", "Int")
+_VAR_RE = re.compile(
+    r"^\s*VAR\s*:\s*(\w+)\s+(Int|Real|Bool)\s*$", re.IGNORECASE | re.MULTILINE
+)
+
+
+def looks_arithmetic(question: str) -> bool:
+    """Whether a question needs a theory of arithmetic to answer.
+
+    Prover9 cannot decide anything numeric, so these must be routed to Z3.
+    """
+    return bool(_ARITHMETIC_RE.search(question))
+
+
+# SMT-LIB operators and keywords — anything else in an assertion is a
+# variable that needs declaring.
+_SMT_RESERVED = frozenset(
+    {
+        "and",
+        "or",
+        "not",
+        "xor",
+        "ite",
+        "let",
+        "distinct",
+        "true",
+        "false",
+        "forall",
+        "exists",
+        "div",
+        "mod",
+        "rem",
+        "abs",
+        "to_real",
+        "to_int",
+        "is_int",
+        "Int",
+        "Real",
+        "Bool",
+        "assert",
+        "declare-const",
+        "declare-fun",
+    }
+)
+_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_.\-]*")
+_DECIMAL_RE = re.compile(r"\d+\.\d+")
+
+
+def infer_variables(
+    constraints: list[str], declared: dict[str, str] | None = None
+) -> dict[str, str]:
+    """Guess declarations for variables the model forgot to declare.
+
+    The model frequently emits correct constraints but omits the ``VAR:``
+    lines, and Z3 then rejects the whole script over an undeclared
+    constant.  Every free identifier is recoverable from the constraints
+    themselves, so recover it rather than failing the query.
+
+    Sort is inferred globally: ``Real`` if any decimal literal appears,
+    otherwise ``Int``.  Wrong only in mixed-sort problems, which the model
+    does not produce in practice.
+
+    Args:
+        constraints: SMT-LIB assertion strings.
+        declared: Declarations the model did provide; these win.
+
+    Returns:
+        Merged declarations covering every identifier used.
+    """
+    result = dict(declared or {})
+    joined = " ".join(constraints)
+    sort = "Real" if _DECIMAL_RE.search(joined) else "Int"
+
+    for token in _IDENT_RE.findall(joined):
+        if token in _SMT_RESERVED or token in result:
+            continue
+        result[token] = sort
+    return result
+
+
+def parse_smt_formalization(raw: str) -> dict[str, Any]:
+    """Parse ``VAR:``/``PREMISE:``/``GOAL:`` lines into an SMT plan.
+
+    Returns:
+        A plan dict with ``tool`` set to ``prove_arithmetic`` (when a GOAL
+        was given) or ``check_satisfiable``, or ``{"tool": "none"}``.
+    """
+    text = _strip_think_blocks(raw)
+
+    variables = {name: sort.capitalize() for name, sort in _VAR_RE.findall(text)}
+    premises: list[str] = []
+    goal = ""
+
+    for label, value in _LINE_RE.findall(text):
+        label = label.upper()
+        if label in {"PREMISE", "STATEMENT"}:
+            premises.append(value)
+        elif label == "GOAL":
+            goal = value
+
+    if not premises and not goal:
+        return {
+            "tool": "none",
+            "reason": (
+                "The question could not be translated into arithmetic "
+                f"constraints. The model replied: {text[:200]}"
+            ),
+        }
+
+    if goal:
+        return {
+            "tool": "prove_arithmetic",
+            "premises": premises,
+            "conclusion": goal,
+            "variables": infer_variables([*premises, goal], variables),
+        }
+    return {
+        "tool": "check_satisfiable",
+        "constraints": premises,
+        "variables": infer_variables(premises, variables),
+    }
+
+
 def _plan_to_lines(plan: dict[str, Any]) -> str:
     """Render a plan back into the labelled-line format, for repair prompts."""
     lines: list[str] = []
-    for premise in plan.get("premises", []) or plan.get("statements", []):
+    for name, sort in (plan.get("variables") or {}).items():
+        lines.append(f"VAR: {name} {sort}")
+    for premise in (
+        plan.get("premises") or plan.get("statements") or plan.get("constraints") or []
+    ):
         lines.append(f"PREMISE: {premise}")
     if plan.get("conclusion"):
         lines.append(f"GOAL: {plan['conclusion']}")
@@ -1073,6 +1452,16 @@ def _is_solver_error(output: dict[str, Any]) -> bool:
     if "error" in output and output.get("error"):
         return True
     return output.get("result") == "error"
+
+
+def _is_undecided(output: dict[str, Any]) -> bool:
+    """Whether Z3 returned no verdict at all.
+
+    ``unknown`` is not an error — the formalization was fine, Z3 just could
+    not decide (nonlinear arithmetic, quantifiers). There is still nothing
+    to report as verified, and repairing the syntax would not help.
+    """
+    return output.get("result") == "unknown"
 
 
 def _strip_think_blocks(text: str) -> str:
