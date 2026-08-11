@@ -78,6 +78,31 @@ You are equipped with **mcp-logic**, a high-fidelity formal reasoning engine. It
 
 ---
 
+## 🤖 Onboard Logic Advisor (TwIL-LM3)
+
+### 9. `ask_logic_advisor` — Natural Language → Complete Solution
+**Purpose**: Solve a logic problem end-to-end without manually writing FOL formulas.
+- **What it does**: You pose a question in natural language, and the onboard reasoning LLM (TwIL-LM3, 3B params) automatically:
+  1. **Formalizes** your question into Prover9/Mace4 syntax
+  2. **Runs** the appropriate solver (prove, find_model, find_counterexample, etc.)
+  3. **Interprets** the result in plain English
+- **When to use**: When you're unsure about FOL syntax, want to quickly test an argument, or need to translate natural language into formal logic.
+- **Input Parameters**:
+  - `question` (String): Your logic question in plain English.
+  - `context` (String, Optional): Background knowledge, constraints, or a previous result to debug.
+- **Examples**:
+  - *"Is it true that if all humans are mortal and Socrates is human, then Socrates is mortal?"*
+  - *"Find a model where there exist at least two distinct elements and every element has a successor."*
+  - *"Is the formula (P → Q) ↔ (¬Q → ¬P) a tautology?"*
+  - *"Can you disprove that all birds can fly, given that penguins are birds but cannot fly?"*
+
+### Recommended Workflow
+- **For natural-language questions**: Call `ask_logic_advisor` — it handles everything.
+- **For pre-formalized problems**: Use `prove`, `find_model`, etc. directly when you already have FOL formulas.
+- **For debugging**: Pass a failed proof result as `context` to `ask_logic_advisor` and ask "Why did this proof fail?"
+
+---
+
 ## ✍️ FOL Syntax Reference
 
 | Name | Symbol | Example |

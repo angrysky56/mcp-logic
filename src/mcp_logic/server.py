@@ -27,6 +27,7 @@ from mcp_logic.categorical_helpers import (
 from mcp_logic.hcc_prover import check_contingency
 
 # Import new modules
+from mcp_logic.logic_advisor import AdvisorDisabledError, LogicAdvisor
 from mcp_logic.mace4_wrapper import Mace4Wrapper
 from mcp_logic.syntax_validator import normalize_formula, validate_formulas
 from mcp_logic.vfe_engine import abductive_explain, abductive_explain_fol
@@ -269,7 +270,75 @@ class LogicEngine:
                 pass  # Temp file cleanup failed, not critical
 
 
-async def main(prover_path: str, log_level: str = "INFO"):
+class _SolverBridge:
+    """Adapts LogicEngine + Mace4 + HCC into the SolverBackend protocol.
+
+    This lets the LogicAdvisor call the real solver infrastructure without
+    importing or knowing about the engine internals.
+    """
+
+    def __init__(self, engine: LogicEngine) -> None:
+        self._engine = engine
+
+    async def prove(
+        self,
+        premises: list[str],
+        conclusion: str,
+        *,
+        timeout: int = 60,
+    ) -> dict[str, Any]:
+        input_file = self._engine.create_input_file(premises, conclusion)
+        return await self._engine.run_prover(input_file, timeout=timeout)
+
+    async def find_model(
+        self,
+        premises: list[str],
+        *,
+        domain_size: int | None = None,
+        timeout: int = 60,
+    ) -> dict[str, Any]:
+        if not self._engine.mace4:
+            return {"error": "Mace4 not available"}
+        return await self._engine.mace4.find_model(
+            premises, domain_size, timeout=timeout
+        )
+
+    async def find_counterexample(
+        self,
+        premises: list[str],
+        conclusion: str,
+        *,
+        domain_size: int | None = None,
+        timeout: int = 60,
+    ) -> dict[str, Any]:
+        if not self._engine.mace4:
+            return {"error": "Mace4 not available"}
+        return await self._engine.mace4.find_counterexample(
+            premises, conclusion, domain_size, timeout=timeout
+        )
+
+    async def check_well_formed(
+        self, statements: list[str]
+    ) -> dict[str, Any]:
+        return validate_formulas(statements)
+
+    async def check_contingency(self, formula: str) -> dict[str, Any]:
+        res = check_contingency(formula)
+        return {
+            "formula": formula,
+            "is_contingent": res.is_contingent,
+            "is_tautology": res.is_tautology,
+            "is_contradiction": res.is_contradiction,
+            "message": res.message,
+        }
+
+
+async def main(
+    prover_path: str,
+    log_level: str = "INFO",
+    model_path: str | None = None,
+    no_advisor: bool = False,
+):
     """Start the MCP Logic Server."""
     # Configure logging
     numeric_level = getattr(logging, log_level.upper(), None)
@@ -284,6 +353,21 @@ async def main(prover_path: str, log_level: str = "INFO"):
     )
 
     engine = LogicEngine(prover_path)
+
+    # Wire up the logic advisor (agentic solver with onboard LLM).
+    solver_bridge = _SolverBridge(engine)
+    advisor = LogicAdvisor(
+        solver=solver_bridge,
+        model_path=model_path,
+        enabled=not no_advisor,
+    )
+    if no_advisor:
+        logger.info("Logic advisor is DISABLED (--no-advisor flag)")
+    else:
+        logger.info(
+            "Logic advisor enabled (model will lazy-load on first query)"
+        )
+
     server = Server("logic-manager")
 
     @server.list_tools()
@@ -538,6 +622,49 @@ async def main(prover_path: str, log_level: str = "INFO"):
                         },
                     },
                     "required": ["observation", "candidates"],
+                },
+            ),
+            types.Tool(
+                name="ask_logic_advisor",
+                description=(
+                    "Ask the onboard logic reasoning LLM to solve a logic "
+                    "problem END-TO-END. You pose a natural-language question "
+                    "and the advisor automatically: (1) formalizes it into "
+                    "Prover9/Mace4 syntax, (2) runs the appropriate solver "
+                    "(prove, find_model, find_counterexample, etc.), and "
+                    "(3) interprets the result in plain English. Use this "
+                    "when you want a complete solution without manually "
+                    "constructing FOL formulas. Examples: 'Is it true that "
+                    "if all humans are mortal and Socrates is human, then "
+                    "Socrates is mortal?', 'Find a model where there exist "
+                    "at least two distinct elements and every element has a "
+                    "successor', 'Is the formula (P -> Q) <-> (-Q -> -P) a "
+                    "tautology?'. For direct solver access with your own "
+                    "formulas, use prove/find_model/find_counterexample "
+                    "instead."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "question": {
+                            "type": "string",
+                            "description": (
+                                "Your logic question in natural language. Be "
+                                "as specific as possible about what you want "
+                                "to prove, check, or find."
+                            ),
+                        },
+                        "context": {
+                            "type": "string",
+                            "description": (
+                                "Optional additional context: background "
+                                "knowledge, constraints, domain-specific "
+                                "definitions, or a previous solver result "
+                                "you want debugged."
+                            ),
+                        },
+                    },
+                    "required": ["question"],
                 },
             ),
         ]
@@ -866,6 +993,45 @@ async def main(prover_path: str, log_level: str = "INFO"):
                     types.TextContent(type="text", text=json.dumps(result, indent=2))
                 ]
 
+            elif name == "ask_logic_advisor":
+                question = arguments.get("question", "")
+                context = arguments.get("context", "")
+                if not question:
+                    return [
+                        types.TextContent(
+                            type="text",
+                            text=json.dumps(
+                                {"error": "Missing required argument: 'question'"},
+                                indent=2,
+                            ),
+                        )
+                    ]
+
+                try:
+                    result = await advisor.solve(question, context)
+                    response = {
+                        "answer": result.answer,
+                        "formalization": result.formalization,
+                        "solver_output": result.solver_output,
+                        "steps": result.steps,
+                    }
+                except AdvisorDisabledError as e:
+                    response = {
+                        "error": str(e),
+                        "hint": (
+                            "The onboard logic advisor LLM is disabled. "
+                            "Restart the server without --no-advisor to "
+                            "enable it, or use the prove/find_model tools "
+                            "directly with your own FOL formulas."
+                        ),
+                    }
+
+                return [
+                    types.TextContent(
+                        type="text", text=json.dumps(response, indent=2)
+                    )
+                ]
+
             else:
                 raise ValueError(f"Unknown tool: {name}")
 
@@ -907,8 +1073,30 @@ def cli():
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Set the logging level (default: INFO)",
     )
+    parser.add_argument(
+        "--model-path",
+        type=str,
+        default=None,
+        help=(
+            "Path to a GGUF model file for the logic advisor. "
+            "If omitted, TwIL-LM3-Q8_0 is auto-downloaded on first use."
+        ),
+    )
+    parser.add_argument(
+        "--no-advisor",
+        action="store_true",
+        default=False,
+        help="Disable the onboard logic advisor LLM entirely.",
+    )
     args = parser.parse_args()
-    asyncio.run(main(args.prover_path, args.log_level))
+    asyncio.run(
+        main(
+            args.prover_path,
+            args.log_level,
+            model_path=args.model_path,
+            no_advisor=args.no_advisor,
+        )
+    )
 
 
 if __name__ == "__main__":
