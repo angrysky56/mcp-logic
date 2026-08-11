@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -21,7 +21,6 @@ from mcp_logic.logic_advisor import (
     LogicAdvisor,
     _strip_think_blocks,
 )
-
 
 # ── Fixtures ────────────────────────────────────────────────────────────
 
@@ -226,14 +225,22 @@ class TestSolvePipeline:
         advisor = _make_advisor(fake_solver)
 
         # Phase 1 returns a prove plan, Phase 3 returns an interpretation.
-        _mock_llm_responses(advisor, [
-            json.dumps({
-                "tool": "prove",
-                "premises": ["all x (human(x) -> mortal(x))", "human(socrates)"],
-                "conclusion": "mortal(socrates)",
-            }),
-            "Yes, Socrates is mortal. The proof follows from the universal premise.",
-        ])
+        _mock_llm_responses(
+            advisor,
+            [
+                json.dumps(
+                    {
+                        "tool": "prove",
+                        "premises": [
+                            "all x (human(x) -> mortal(x))",
+                            "human(socrates)",
+                        ],
+                        "conclusion": "mortal(socrates)",
+                    }
+                ),
+                "Yes, Socrates is mortal. The proof follows from the universal premise.",
+            ],
+        )
 
         result = await advisor.solve(
             "If all humans are mortal and Socrates is human, is Socrates mortal?"
@@ -250,14 +257,19 @@ class TestSolvePipeline:
     async def test_find_model_pipeline(self, fake_solver: FakeSolver) -> None:
         advisor = _make_advisor(fake_solver)
 
-        _mock_llm_responses(advisor, [
-            json.dumps({
-                "tool": "find_model",
-                "premises": ["exists x exists y (x != y)"],
-                "domain_size": 3,
-            }),
-            "A model was found with 2 elements where distinct elements exist.",
-        ])
+        _mock_llm_responses(
+            advisor,
+            [
+                json.dumps(
+                    {
+                        "tool": "find_model",
+                        "premises": ["exists x exists y (x != y)"],
+                        "domain_size": 3,
+                    }
+                ),
+                "A model was found with 2 elements where distinct elements exist.",
+            ],
+        )
 
         result = await advisor.solve(
             "Find a model where there exist at least two distinct elements."
@@ -271,13 +283,18 @@ class TestSolvePipeline:
     async def test_check_contingency_pipeline(self, fake_solver: FakeSolver) -> None:
         advisor = _make_advisor(fake_solver)
 
-        _mock_llm_responses(advisor, [
-            json.dumps({
-                "tool": "check_contingency",
-                "formula": "p -> p",
-            }),
-            "Yes, p -> p is a tautology.",
-        ])
+        _mock_llm_responses(
+            advisor,
+            [
+                json.dumps(
+                    {
+                        "tool": "check_contingency",
+                        "formula": "p -> p",
+                    }
+                ),
+                "Yes, p -> p is a tautology.",
+            ],
+        )
 
         result = await advisor.solve("Is p implies p a tautology?")
 
@@ -290,12 +307,17 @@ class TestSolvePipeline:
         """When LLM says the question isn't a logic problem, no solver runs."""
         advisor = _make_advisor(fake_solver)
 
-        _mock_llm_responses(advisor, [
-            json.dumps({
-                "tool": "none",
-                "reason": "This is a factual question, not a logic problem.",
-            }),
-        ])
+        _mock_llm_responses(
+            advisor,
+            [
+                json.dumps(
+                    {
+                        "tool": "none",
+                        "reason": "This is a factual question, not a logic problem.",
+                    }
+                ),
+            ],
+        )
 
         result = await advisor.solve("What is the capital of France?")
 
@@ -337,14 +359,19 @@ class TestSolvePipeline:
 
         fake_solver.prove = exploding_prove  # type: ignore[assignment]
 
-        _mock_llm_responses(advisor, [
-            json.dumps({
-                "tool": "prove",
-                "premises": ["p"],
-                "conclusion": "q",
-            }),
-            "The solver encountered an error.",
-        ])
+        _mock_llm_responses(
+            advisor,
+            [
+                json.dumps(
+                    {
+                        "tool": "prove",
+                        "premises": ["p"],
+                        "conclusion": "q",
+                    }
+                ),
+                "The solver encountered an error.",
+            ],
+        )
 
         result = await advisor.solve("Prove p implies q")
 
@@ -356,18 +383,21 @@ class TestQueryShortcut:
     """Test the simple string-in/string-out query() method."""
 
     @pytest.mark.asyncio
-    async def test_query_returns_answer_string(
-        self, fake_solver: FakeSolver
-    ) -> None:
+    async def test_query_returns_answer_string(self, fake_solver: FakeSolver) -> None:
         advisor = _make_advisor(fake_solver)
-        _mock_llm_responses(advisor, [
-            json.dumps({
-                "tool": "prove",
-                "premises": ["p"],
-                "conclusion": "p",
-            }),
-            "Yes, p is trivially provable from p.",
-        ])
+        _mock_llm_responses(
+            advisor,
+            [
+                json.dumps(
+                    {
+                        "tool": "prove",
+                        "premises": ["p"],
+                        "conclusion": "p",
+                    }
+                ),
+                "Yes, p is trivially provable from p.",
+            ],
+        )
 
         answer = await advisor.query("Can you prove p from p?")
         assert isinstance(answer, str)
