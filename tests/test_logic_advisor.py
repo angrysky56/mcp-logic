@@ -20,6 +20,8 @@ from mcp_logic.logic_advisor import (
     AdvisorResult,
     LogicAdvisor,
     _strip_think_blocks,
+    normalize_plan,
+    normalize_syntax,
 )
 
 # ── Fixtures ────────────────────────────────────────────────────────────
@@ -98,7 +100,10 @@ class FakeSolver:
 
     async def check_well_formed(self, statements: list[str]) -> dict[str, Any]:
         self.check_well_formed_calls.append({"statements": statements})
-        return {"valid": True}
+        return self.check_well_formed_result
+
+    # Overridable so tests can simulate a validator rejection.
+    check_well_formed_result: dict[str, Any] = {"valid": True}
 
     async def check_contingency(self, formula: str) -> dict[str, Any]:
         self.check_contingency_calls.append({"formula": formula})
@@ -402,3 +407,178 @@ class TestQueryShortcut:
         answer = await advisor.query("Can you prove p from p?")
         assert isinstance(answer, str)
         assert "provable" in answer
+
+
+# ── Syntax normalization ────────────────────────────────────────────────
+
+
+class TestNormalizeSyntax:
+    """The model drifts into Unicode/other-dialect notation; we rewrite it."""
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ("∀x (Cat(x) → Animal(x))", "all x (Cat(x) -> Animal(x))"),
+            ("∃x (Animal(x) ∧ Dog(x))", "exists x (Animal(x) & Dog(x))"),
+            ("p ∨ ¬p", "p | -p"),
+            ("p <=> q", "p <-> q"),
+            ("p => q", "p -> q"),
+            ("p || q", "p | q"),
+            ("p && q", "p & q"),
+            ("~p", "-p"),
+            ("forall x (p(x))", "all x (p(x))"),
+            ("x ≠ y", "x != y"),
+            ("mortal(socrates).", "mortal(socrates)"),
+        ],
+    )
+    def test_rewrites(self, raw: str, expected: str) -> None:
+        assert normalize_syntax(raw) == expected
+
+    def test_leaves_valid_formulas_untouched(self) -> None:
+        formula = "all x (human(x) -> mortal(x))"
+        assert normalize_syntax(formula) == formula
+
+    def test_normalize_plan_covers_all_formula_fields(self) -> None:
+        plan = {
+            "tool": "prove",
+            "premises": ["∀x (p(x) → q(x))"],
+            "conclusion": "∃x q(x)",
+        }
+        cleaned = normalize_plan(plan)
+        assert cleaned["premises"] == ["all x (p(x) -> q(x))"]
+        assert cleaned["conclusion"] == "exists x q(x)"
+        # Original must not be mutated.
+        assert plan["conclusion"] == "∃x q(x)"
+
+
+# ── Verification honesty ────────────────────────────────────────────────
+
+
+class TestUnverifiedResults:
+    """A solver failure must never be dressed up as an answer."""
+
+    @pytest.mark.asyncio
+    async def test_solver_error_yields_unverified_result(
+        self, fake_solver: FakeSolver
+    ) -> None:
+        fake_solver.prove_result = {
+            "result": "error",
+            "reason": "Syntax error or invalid input",
+        }
+        advisor = _make_advisor(fake_solver)
+        _mock_llm_responses(
+            advisor,
+            [
+                json.dumps(
+                    {"tool": "prove", "premises": ["p"], "conclusion": "q"}
+                ),
+                "Yes! Absolutely provable.",  # must NOT be used
+            ],
+        )
+
+        result = await advisor.solve("Does q follow from p?")
+        assert result.verified is False
+        assert "Absolutely provable" not in result.answer
+        assert "Syntax error" in result.answer
+
+    @pytest.mark.asyncio
+    async def test_successful_proof_is_verified(
+        self, fake_solver: FakeSolver
+    ) -> None:
+        advisor = _make_advisor(fake_solver)
+        _mock_llm_responses(
+            advisor,
+            [
+                json.dumps(
+                    {"tool": "prove", "premises": ["p"], "conclusion": "p"}
+                ),
+                "Yes, trivially.",
+            ],
+        )
+        result = await advisor.solve("Does p follow from p?")
+        assert result.verified is True
+        assert result.answer == "Yes, trivially."
+
+    @pytest.mark.asyncio
+    async def test_unformalizable_question_is_unverified(
+        self, fake_solver: FakeSolver
+    ) -> None:
+        advisor = _make_advisor(fake_solver)
+        _mock_llm_responses(
+            advisor,
+            [json.dumps({"tool": "none", "reason": "not a logic problem"})],
+        )
+        result = await advisor.solve("What is your favourite colour?")
+        assert result.verified is False
+
+
+# ── Validate-and-repair loop ────────────────────────────────────────────
+
+
+class TestRepairLoop:
+    """A rejected formalization gets exactly one repair attempt."""
+
+    @pytest.mark.asyncio
+    async def test_invalid_plan_is_repaired_then_executed(
+        self, fake_solver: FakeSolver
+    ) -> None:
+        rejections = {"n": 0}
+
+        async def picky_check(statements: list[str]) -> dict[str, Any]:
+            rejections["n"] += 1
+            if rejections["n"] == 1:
+                return {
+                    "valid": False,
+                    "formula_results": [
+                        {
+                            "formula": statements[0],
+                            "valid": False,
+                            "errors": ["unknown token"],
+                        }
+                    ],
+                    "set_errors": [],
+                }
+            return {"valid": True}
+
+        fake_solver.check_well_formed = picky_check  # type: ignore[assignment]
+        advisor = _make_advisor(fake_solver)
+        _mock_llm_responses(
+            advisor,
+            [
+                json.dumps({"tool": "prove", "premises": ["bad!"], "conclusion": "q"}),
+                json.dumps({"tool": "prove", "premises": ["p"], "conclusion": "q"}),
+                "Yes, q follows.",
+            ],
+        )
+
+        result = await advisor.solve("Does q follow?")
+        assert result.verified is True
+        assert result.formalization["premises"] == ["p"]
+        assert fake_solver.prove_calls[0]["premises"] == ["p"]
+
+    @pytest.mark.asyncio
+    async def test_repair_failure_returns_unverified(
+        self, fake_solver: FakeSolver
+    ) -> None:
+        async def always_reject(statements: list[str]) -> dict[str, Any]:
+            return {
+                "valid": False,
+                "formula_results": [],
+                "set_errors": ["arity conflict on p"],
+            }
+
+        fake_solver.check_well_formed = always_reject  # type: ignore[assignment]
+        advisor = _make_advisor(fake_solver)
+        _mock_llm_responses(
+            advisor,
+            [
+                json.dumps({"tool": "prove", "premises": ["p(x)"], "conclusion": "p"}),
+                json.dumps({"tool": "prove", "premises": ["p(x)"], "conclusion": "p"}),
+            ],
+        )
+
+        result = await advisor.solve("Does p follow?")
+        assert result.verified is False
+        assert "arity conflict" in result.answer
+        # The solver must never have been invoked with an invalid plan.
+        assert fake_solver.prove_calls == []

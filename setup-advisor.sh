@@ -94,15 +94,33 @@ info "Installing llama-cpp-python (this may take a few minutes to compile)..."
 step "CMAKE_ARGS=\"${CMAKE_ARGS:-<none>}\""
 
 if [ -n "$CMAKE_ARGS" ]; then
+    # --no-binary is REQUIRED: without it uv installs the prebuilt CPU-only
+    # wheel from PyPI and CMAKE_ARGS is silently ignored, so the advisor runs
+    # on CPU while the script claims GPU acceleration.
+    warn "Building llama-cpp-python from source — this takes 10-20 minutes."
     CMAKE_ARGS="$CMAKE_ARGS" uv pip install \
         --directory "${PROJECT_DIR}" \
         --reinstall-package llama-cpp-python \
+        --no-binary llama-cpp-python \
         "llama-cpp-python>=0.3.0"
 else
     uv pip install \
         --directory "${PROJECT_DIR}" \
         --reinstall-package llama-cpp-python \
         "llama-cpp-python>=0.3.0"
+fi
+
+# ── Step 4b: Verify the acceleration we claimed actually got compiled ──
+if [ -n "$CMAKE_ARGS" ]; then
+    if uv run --directory "${PROJECT_DIR}" python -c \
+        "from llama_cpp import llama_cpp as c; raise SystemExit(0 if c.llama_supports_gpu_offload() else 1)" \
+        2>/dev/null; then
+        info "Verified: GPU offload is compiled in."
+    else
+        warn "GPU offload is NOT available in the installed build — the"
+        warn "advisor will run on CPU (roughly 10x slower). Check the build"
+        warn "log above for compiler errors, and that nvcc is on your PATH."
+    fi
 fi
 
 # ── Step 5: Install huggingface-hub ────────────────────────────────────
@@ -127,7 +145,6 @@ hf_hub_download(
     repo_id='webAI-Official/TwIL-LM3',
     filename='TwIL-LM3-Q8_0.gguf',
     local_dir='${MODEL_DIR}',
-    local_dir_use_symlinks=False,
 )
 print('Download complete!')
 "

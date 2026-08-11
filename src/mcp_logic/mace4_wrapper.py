@@ -132,8 +132,10 @@ class Mace4Wrapper:
                 stdout, stderr = await asyncio.wait_for(
                     process.communicate(), timeout=timeout + 1
                 )
-                stdout_str = stdout.decode()
-                stderr_str = stderr.decode()
+                # Mace4 echoes input back, so malformed non-UTF-8 formulas
+                # can appear in stdout; decode defensively.
+                stdout_str = stdout.decode("utf-8", errors="replace")
+                stderr_str = stderr.decode("utf-8", errors="replace")
 
                 logger.debug("Mace4 stdout:\n%s", stdout_str)
                 if stderr_str:

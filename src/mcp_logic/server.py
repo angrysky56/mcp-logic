@@ -196,8 +196,11 @@ class LogicEngine:
                 stdout, stderr = await asyncio.wait_for(
                     process.communicate(), timeout=timeout
                 )
-                stdout_str = stdout.decode()
-                stderr_str = stderr.decode()
+                # Prover9 echoes the input back verbatim, so non-UTF-8 bytes
+                # in a malformed formula land in stdout.  Never let that
+                # crash the run — surface the syntax error instead.
+                stdout_str = stdout.decode("utf-8", errors="replace")
+                stderr_str = stderr.decode("utf-8", errors="replace")
 
                 logger.debug("Prover9 stdout:\n%s", stdout_str)
                 if stderr_str:
@@ -1011,10 +1014,19 @@ async def main(
                     result = await advisor.solve(question, context)
                     response = {
                         "answer": result.answer,
+                        # False means the solver did NOT return a verdict —
+                        # the answer is not machine-checked and must not be
+                        # presented to the user as a proof.
+                        "verified": result.verified,
                         "formalization": result.formalization,
                         "solver_output": result.solver_output,
                         "steps": result.steps,
                     }
+                    if not result.verified:
+                        response["warning"] = (
+                            "UNVERIFIED: the solver returned no verdict. Do "
+                            "not present this as a proved result."
+                        )
                 except AdvisorDisabledError as e:
                     response = {
                         "error": str(e),
