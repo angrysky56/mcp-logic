@@ -89,30 +89,56 @@ if [ ! -d "${PROJECT_DIR}/.venv" ]; then
 	uv venv --directory "${PROJECT_DIR}"
 fi
 
+# Target this project's interpreter EXPLICITLY. `uv pip install --directory`
+# still honours an active VIRTUAL_ENV, so running this script from inside
+# another project's activated venv installs everything into the wrong place
+# and silently leaves the advisor broken. --python removes the ambiguity.
+VENV_PY="${PROJECT_DIR}/.venv/bin/python"
+if [[ ! -x ${VENV_PY} ]]; then
+	VENV_PY="${PROJECT_DIR}/.venv/Scripts/python.exe" # Git Bash on Windows
+fi
+if [[ ! -x ${VENV_PY} ]]; then
+	err "No interpreter found in ${PROJECT_DIR}/.venv"
+	exit 1
+fi
+if [[ -n ${VIRTUAL_ENV-} ]] && [[ ${VIRTUAL_ENV} != "${PROJECT_DIR}/.venv" ]]; then
+	warn "A different venv is active (${VIRTUAL_ENV})."
+	warn "Installing into ${PROJECT_DIR}/.venv anyway."
+fi
+step "Target interpreter: ${VENV_PY}"
+
 # ── Step 4: Install llama-cpp-python ───────────────────────────────────
 info "Installing llama-cpp-python (this may take a few minutes to compile)..."
 step "CMAKE_ARGS=\"${CMAKE_ARGS:-<none>}\""
 
 if [ -n "$CMAKE_ARGS" ]; then
-	# --no-binary is REQUIRED: without it uv installs the prebuilt CPU-only
-	# wheel from PyPI and CMAKE_ARGS is silently ignored, so the advisor runs
-	# on CPU while the script claims GPU acceleration.
+	# --no-cache is REQUIRED, and is the whole ballgame. PyPI ships
+	# llama-cpp-python as an sdist only, so uv compiles it locally and caches
+	# the resulting wheel. That cache key does NOT include CMAKE_ARGS, so once
+	# a CPU-only wheel has been built, every later run silently reuses it and
+	# the CUDA flags never take effect. Neither --reinstall-package (which
+	# reinstalls from cache) nor --refresh-package fixes this; both were tried
+	# and both still restored the stale CPU wheel in about 0.2 seconds.
+	# `uv cache clean llama-cpp-python` works in principle but scans the whole
+	# cache and can hang for many minutes on a large one.
+	# Rule of thumb: if this step finishes in seconds, it did NOT compile.
 	warn "Building llama-cpp-python from source — this takes 10-20 minutes."
 	CMAKE_ARGS="$CMAKE_ARGS" uv pip install \
-		--directory "${PROJECT_DIR}" \
+		--no-cache \
+		--python "${VENV_PY}" \
 		--reinstall-package llama-cpp-python \
 		--no-binary llama-cpp-python \
 		"llama-cpp-python>=0.3.0"
 else
 	uv pip install \
-		--directory "${PROJECT_DIR}" \
+		--python "${VENV_PY}" \
 		--reinstall-package llama-cpp-python \
 		"llama-cpp-python>=0.3.0"
 fi
 
 # ── Step 4b: Verify the acceleration we claimed actually got compiled ──
 if [ -n "$CMAKE_ARGS" ]; then
-	if uv run --directory "${PROJECT_DIR}" python -c \
+	if "${VENV_PY}" -c \
 		"from llama_cpp import llama_cpp as c; raise SystemExit(0 if c.llama_supports_gpu_offload() else 1)" \
 		2>/dev/null; then
 		info "Verified: GPU offload is compiled in."
@@ -125,7 +151,7 @@ fi
 
 # ── Step 5: Install huggingface-hub ────────────────────────────────────
 info "Installing huggingface-hub..."
-uv pip install --directory "${PROJECT_DIR}" "huggingface-hub>=0.24.0"
+uv pip install --python "${VENV_PY}" "huggingface-hub>=0.24.0"
 
 # ── Step 6: Download model (optional) ─────────────────────────────────
 MODEL_DIR="${HOME}/.cache/mcp-logic/models"
@@ -139,7 +165,7 @@ else
 	info "Downloading TwIL-LM3-Q8_0.gguf (~3.3 GB)..."
 	step "Destination: ${MODEL_DIR}/"
 	mkdir -p "${MODEL_DIR}"
-	uv run --directory "${PROJECT_DIR}" python -c "
+	"${VENV_PY}" -c "
 from huggingface_hub import hf_hub_download
 hf_hub_download(
     repo_id='webAI-Official/TwIL-LM3',

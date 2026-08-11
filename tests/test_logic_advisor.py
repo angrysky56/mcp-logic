@@ -16,12 +16,16 @@ from unittest.mock import MagicMock
 import pytest
 
 from mcp_logic.logic_advisor import (
+    _DEFAULT_MAX_TOKENS,
+    _DEFAULT_N_CTX,
     AdvisorDisabledError,
     AdvisorResult,
     LogicAdvisor,
     _strip_think_blocks,
+    infer_tool,
     normalize_plan,
     normalize_syntax,
+    parse_formalization,
 )
 
 # ── Fixtures ────────────────────────────────────────────────────────────
@@ -129,7 +133,11 @@ def _make_advisor(
 
 
 def _mock_llm_responses(advisor: LogicAdvisor, responses: list[str]) -> None:
-    """Patch the advisor's LLM calls to return canned responses in order."""
+    """Patch the advisor's LLM calls to return canned responses in order.
+
+    Responses are consumed in order: formalization first, then the
+    interpretation, with any repair calls in between.
+    """
     call_count = {"n": 0}
     original_responses = list(responses)
 
@@ -576,3 +584,224 @@ class TestRepairLoop:
         assert "arity conflict" in result.answer
         # The solver must never have been invoked with an invalid plan.
         assert fake_solver.prove_calls == []
+
+
+class TestSolverErrorRepair:
+    """Prover9 is the authoritative parser; its rejection triggers a repair."""
+
+    @pytest.mark.asyncio
+    async def test_solver_syntax_error_triggers_repair_and_retry(
+        self, fake_solver: FakeSolver
+    ) -> None:
+        # The permissive validator waves the bad plan through; only the
+        # solver catches it.
+        attempts: list[list[str]] = []
+
+        async def picky_prove(
+            premises: list[str], conclusion: str, *, timeout: int = 60
+        ) -> dict[str, Any]:
+            attempts.append(premises)
+            if premises == ["All cats are animals"]:
+                return {
+                    "result": "error",
+                    "error": "Fatal error:  sread_term error",
+                }
+            return {"result": "unprovable", "reason": "search exhausted"}
+
+        fake_solver.prove = picky_prove  # type: ignore[assignment]
+        advisor = _make_advisor(fake_solver)
+        _mock_llm_responses(
+            advisor,
+            [
+                json.dumps(
+                    {
+                        "tool": "prove",
+                        "premises": ["All cats are animals"],
+                        "conclusion": "q",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "tool": "prove",
+                        "premises": ["all x (cat(x) -> animal(x))"],
+                        "conclusion": "q",
+                    }
+                ),
+                "No, it does not follow.",
+            ],
+        )
+
+        result = await advisor.solve("Does it follow?")
+        assert len(attempts) == 2, "solver should have been retried after repair"
+        assert attempts[1] == ["all x (cat(x) -> animal(x))"]
+        assert result.verified is True
+        assert result.answer == "No, it does not follow."
+
+    @pytest.mark.asyncio
+    async def test_repair_that_still_fails_stays_unverified(
+        self, fake_solver: FakeSolver
+    ) -> None:
+        fake_solver.prove_result = {
+            "result": "error",
+            "error": "Fatal error:  sread_term error",
+        }
+        advisor = _make_advisor(fake_solver)
+        _mock_llm_responses(
+            advisor,
+            [
+                json.dumps({"tool": "prove", "premises": ["junk"], "conclusion": "q"}),
+                json.dumps({"tool": "prove", "premises": ["junk2"], "conclusion": "q"}),
+                "Sounds right to me!",  # must never surface
+            ],
+        )
+
+        result = await advisor.solve("Does it follow?")
+        assert result.verified is False
+        assert "Sounds right" not in result.answer
+
+
+class TestUnterminatedThinkBlock:
+    """A <think> block the model never closed must not eat the answer."""
+
+    def test_unterminated_think_keeps_content(self) -> None:
+        text = '<think>reasoning here\n{"tool": "prove"}'
+        out = _strip_think_blocks(text)
+        assert "<think>" not in out
+        assert '{"tool": "prove"}' in out
+
+    def test_closed_block_still_removed_entirely(self) -> None:
+        text = '<think>hidden</think>\n{"tool": "prove"}'
+        assert "hidden" not in _strip_think_blocks(text)
+
+    def test_plan_recovered_from_unterminated_think(self) -> None:
+        # The exact shape observed from TwIL-LM3: opens <think>, never closes,
+        # sketches an example object, then states the real plan last.
+        raw = (
+            "<think>The user asks about Socrates. Format is like "
+            '{"tool": "x", "premises": []} and so on.\n\n'
+            "The JSON output should be:\n"
+            '{"tool": "prove", "premises": ["all x (human(x) -> mortal(x))", '
+            '"human(socrates)"], "conclusion": "mortal(socrates)"}'
+        )
+        plan = LogicAdvisor._parse_plan(_strip_think_blocks(raw))
+        assert plan["tool"] == "prove"
+        assert plan["conclusion"] == "mortal(socrates)"
+        assert len(plan["premises"]) == 2
+
+    def test_last_object_wins_over_greedy_span(self) -> None:
+        raw = 'Consider {"tool": "find_model"} then finally {"tool": "prove"}'
+        assert LogicAdvisor._parse_plan(raw)["tool"] == "prove"
+
+    def test_braces_inside_strings_do_not_confuse_scanner(self) -> None:
+        raw = '{"tool": "prove", "conclusion": "p(\\"{\\") & q"}'
+        assert LogicAdvisor._parse_plan(raw)["tool"] == "prove"
+
+
+class TestDecodingSettings:
+    """Model-card decoding settings must actually reach llama.cpp."""
+
+    def test_repeat_penalty_pinned_to_one(self, fake_solver: FakeSolver) -> None:
+        captured: dict[str, Any] = {}
+
+        class FakeModel:
+            def create_chat_completion(self, **kwargs: Any) -> dict[str, Any]:
+                captured.update(kwargs)
+                return {"choices": [{"message": {"content": "{}"}}]}
+
+        advisor = _make_advisor(fake_solver)
+        advisor._model = FakeModel()
+        advisor._create_chat_completion([], 2048, 0.0)
+
+        # llama.cpp defaults this to 1.1; the card calls 1.0 load-bearing.
+        assert captured["repeat_penalty"] == 1.0
+
+    def test_generation_budget_meets_model_card_minimum(self) -> None:
+        # The card: a short budget truncates the <think> block and "costs far
+        # more accuracy than the quantization does".
+        assert _DEFAULT_MAX_TOKENS >= 2048
+        assert _DEFAULT_N_CTX >= 8192
+
+
+class TestToolInference:
+    """Tool choice is derived from the translation, not a second LLM call."""
+
+    def test_goal_means_prove(self) -> None:
+        parts = {"premises": ["human(socrates)"], "goal": "mortal(socrates)"}
+        assert infer_tool("Does it follow that Socrates is mortal?", parts) == "prove"
+
+    def test_bare_formula_means_contingency(self) -> None:
+        assert infer_tool("Is p or not p a tautology?", {"formula": "p | -p"}) == (
+            "check_contingency"
+        )
+
+    def test_premises_only_means_find_model(self) -> None:
+        parts = {"premises": ["exists x exists y (x != y)"]}
+        assert infer_tool("Find a world with two things.", parts) == "find_model"
+
+    def test_explicit_counterexample_request_overrides_prove(self) -> None:
+        parts = {"premises": ["p"], "goal": "q"}
+        assert infer_tool("Find a counterexample to q.", parts) == (
+            "find_counterexample"
+        )
+        assert infer_tool("Can you disprove q?", parts) == "find_counterexample"
+
+    def test_nothing_translated_means_none(self) -> None:
+        assert infer_tool("What is your favourite colour?", {}) == "none"
+
+    def test_consistency_question_routes_to_model_finding(self) -> None:
+        parts = {"premises": ["p", "-p"]}
+        assert infer_tool("Are these axioms consistent?", parts) == "find_model"
+
+
+class TestLineFormalization:
+    """Labelled-line output is the format this model handles best."""
+
+    def test_prove_plan(self) -> None:
+        raw = (
+            "PREMISE: all x (cat(x) -> animal(x))\n"
+            "PREMISE: exists x (animal(x) & dog(x))\n"
+            "GOAL: exists x (cat(x) & dog(x))"
+        )
+        plan = parse_formalization(raw, question="Does it follow?")
+        assert plan["tool"] == "prove"
+        assert len(plan["premises"]) == 2
+        assert plan["conclusion"] == "exists x (cat(x) & dog(x))"
+
+    def test_contingency_plan(self) -> None:
+        plan = parse_formalization("FORMULA: p | -p", question="Is it a tautology?")
+        assert plan == {"tool": "check_contingency", "formula": "p | -p"}
+
+    def test_find_model_with_domain(self) -> None:
+        raw = "PREMISE: exists x exists y (x != y)\nDOMAIN: 3"
+        plan = parse_formalization(raw, question="Find a model with two things.")
+        assert plan["domain_size"] == 3
+        assert "conclusion" not in plan
+
+    def test_lines_survive_surrounding_reasoning(self) -> None:
+        raw = (
+            "<think>I should translate this carefully.</think>\n"
+            "Here is the translation:\n"
+            "PREMISE: human(socrates)\n"
+            "GOAL: mortal(socrates)\n"
+            "That should do it."
+        )
+        plan = parse_formalization(raw, question="Is Socrates mortal?")
+        assert plan["premises"] == ["human(socrates)"]
+        assert plan["conclusion"] == "mortal(socrates)"
+
+    def test_prove_without_goal_is_rejected(self) -> None:
+        plan = parse_formalization(
+            "PREMISE: p", question="Does q follow?", tool="prove"
+        )
+        assert plan["tool"] == "none"
+
+    def test_falls_back_to_json_shape(self) -> None:
+        # The model sometimes answers in the old JSON format anyway.
+        raw = '{"tool": "prove", "premises": ["p"], "conclusion": "q"}'
+        plan = parse_formalization(raw, "prove")
+        assert plan["conclusion"] == "q"
+
+    def test_unusable_output_reports_none(self) -> None:
+        plan = parse_formalization("I am not sure what you mean.", question="huh?")
+        assert plan["tool"] == "none"
+        assert "reason" in plan

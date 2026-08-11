@@ -40,6 +40,25 @@ _DEFAULT_CACHE_DIR = Path.home() / ".cache" / "mcp-logic" / "models"
 
 # Strip <think>…</think> reasoning blocks from output.
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
+# An opening <think> with no matching close — the model never left reasoning
+# mode. The tag must still go, but the text after it is kept: the answer is
+# often in there.
+_OPEN_THINK_RE = re.compile(r"<think>", re.IGNORECASE)
+
+# ── Decoding settings (from the TwIL-LM3 model card) ────────────────────
+# The card is explicit on all three, and each was wrong in the first cut:
+#   * greedy decoding — "Pass --temp 0, because the evaluation is greedy
+#     while the packaged sampling defaults are not."
+#   * >= 2048 generation budget — the model opens a <think> block before
+#     answering and "a short budget truncates it, which costs far more
+#     accuracy than the quantization does."
+#   * repetition_penalty 1.0 — "load-bearing"; llama.cpp defaults to 1.1.
+_DEFAULT_TEMPERATURE = 0.0
+_DEFAULT_MAX_TOKENS = 2048
+_REPEAT_PENALTY = 1.0
+# Eval protocol uses max_seq_len 8192; 4096 leaves no room for prompt +
+# reasoning + answer at a 2048-token budget.
+_DEFAULT_N_CTX = 8192
 
 # Keys in a plan whose values are formula text needing normalization.
 _FORMULA_LIST_KEYS = ("premises", "statements")
@@ -228,6 +247,65 @@ Rules:
 - Reference the original question in your answer.
 """
 
+# The formalization prompt is deliberately shaped like the model's training
+# task — numbered-line translation, not JSON authoring.  Measured on this
+# model: asking for a JSON tool-plan gets the solver to accept 3/9 outputs,
+# adding worked examples 6/9, and line-oriented translation 9/9.  The card
+# also warns it has had "no instruction-following alignment work", so the
+# narrowest possible task wins.
+_FORMALIZE_LINES_SYSTEM = """\
+You are a first-order logic translator. Translate the user's question into \
+Prover9 formulas.
+
+## Output format — one item per line, nothing else
+PREMISE: <formula>      (one line per premise; omit if there are none)
+GOAL: <formula>         (the conclusion, only for prove/find_counterexample)
+FORMULA: <formula>      (only for check_contingency)
+DOMAIN: <integer>       (optional, only for find_model)
+
+## Prover9 syntax — ASCII only
+- Universal:   all x (human(x) -> mortal(x))
+- Existential: exists x (pet(x) & dog(x))
+- Connectives: -> implies, <-> iff, & and, | or, - not
+- Predicates, functions and constants are lowercase: human(x), socrates
+- Variables are lowercase letters: x, y, z
+- Equality =, inequality !=
+- Quantifiers MUST be parenthesized. No trailing period.
+
+## Examples
+
+Question: All humans are mortal. Socrates is a human. Does it follow that Socrates is mortal?
+PREMISE: all x (human(x) -> mortal(x))
+PREMISE: human(socrates)
+GOAL: mortal(socrates)
+
+Question: All cats are animals. Some animals are dogs. Does it follow that some cats are dogs?
+PREMISE: all x (cat(x) -> animal(x))
+PREMISE: exists x (animal(x) & dog(x))
+GOAL: exists x (cat(x) & dog(x))
+
+Question: Is p or not p a tautology?
+FORMULA: p | -p
+
+Question: Is the formula 'q and not q' a tautology, a contradiction, or contingent?
+FORMULA: q & -q
+
+Question: Find a world where every element has a successor and no element is its own successor.
+PREMISE: all x exists y (succ(x,y))
+PREMISE: all x (-succ(x,x))
+
+## Two rules that override everything else
+
+1. TRANSLATE, DO NOT ANSWER. You are never being asked to decide the
+   question — a separate solver does that. If asked "is this a tautology?",
+   emit the FORMULA: line and stop. Writing "TAUTOLOGY" is WRONG.
+2. NEVER write an English sentence after PREMISE:, GOAL: or FORMULA:.
+   "All cats are animals" is WRONG; "all x (cat(x) -> animal(x))" is RIGHT.
+
+If the question is not a logic problem at all, output exactly:
+NONE
+"""
+
 _REPAIR_SYSTEM = """\
 You are a formal logic expert. Your previous formalization was REJECTED — \
 either the syntax validator or the solver refused it. Produce a corrected \
@@ -288,7 +366,7 @@ class LogicAdvisor:
         solver: SolverBackend,
         model_path: str | None = None,
         n_gpu_layers: int = -1,
-        n_ctx: int = 4096,
+        n_ctx: int = _DEFAULT_N_CTX,
         *,
         enabled: bool = True,
     ) -> None:
@@ -357,13 +435,19 @@ class LogicAdvisor:
         if context:
             user_msg = f"{question}\n\n### Context\n{context}"
 
-        plan_json = await self._llm_call(
-            system=_FORMALIZE_SYSTEM,
+        # ONE narrow call, shaped like the model's training task: translate
+        # the question into labelled formula lines.  The tool is then derived
+        # from what came back rather than asked for separately — measured
+        # 3/9 solver-accepted for "emit a JSON plan" against 9/9 for
+        # translation, and a separate tool-naming call returned "none" every
+        # time because the model thinks before answering.
+        lines = await self._llm_call(
+            system=_FORMALIZE_LINES_SYSTEM,
             user=user_msg,
-            max_tokens=1024,
+            max_tokens=_DEFAULT_MAX_TOKENS,
         )
 
-        plan = normalize_plan(self._parse_plan(plan_json))
+        plan = normalize_plan(parse_formalization(lines, question=question))
         steps.append(f"Formalization: {json.dumps(plan, indent=2)}")
 
         if plan.get("tool") == "none":
@@ -417,6 +501,30 @@ class LogicAdvisor:
         solver_output = await self._run_solver(plan)
         steps.append(f"Solver result: {json.dumps(solver_output, indent=2)[:500]}")
 
+        # ── Phase 2b: Repair against the solver's own parser ─────────────
+        # The syntax validator is permissive — it accepts plain English and
+        # arithmetic Prover9 cannot parse — so a clean validation says very
+        # little.  Prover9 itself is the only authoritative parser, which
+        # makes its rejection the signal actually worth repairing against.
+        if _is_solver_error(solver_output):
+            solver_reason = (
+                solver_output.get("error")
+                or solver_output.get("reason")
+                or "unknown solver error"
+            )
+            steps.append(f"Solver rejected the formalization: {solver_reason}")
+            steps.append("Phase 2b: Repairing against the solver error...")
+            repaired = await self._repair_plan(user_msg, plan, str(solver_reason))
+            steps.append(f"Repaired formalization: {json.dumps(repaired, indent=2)}")
+
+            if repaired.get("tool") not in (None, "none"):
+                plan = repaired
+                solver_output = await self._run_solver(plan)
+                steps.append(
+                    f"Solver result after repair: "
+                    f"{json.dumps(solver_output, indent=2)[:500]}"
+                )
+
         # A solver error means there is no verdict to interpret.  Letting the
         # LLM answer anyway produces a confident, unverified guess — exactly
         # the failure this tool exists to prevent.
@@ -450,7 +558,7 @@ class LogicAdvisor:
         answer = await self._llm_call(
             system=_INTERPRET_SYSTEM,
             user=interpret_prompt,
-            max_tokens=1024,
+            max_tokens=_DEFAULT_MAX_TOKENS,
         )
         steps.append("Done.")
 
@@ -485,8 +593,8 @@ class LogicAdvisor:
         self,
         system: str,
         user: str,
-        max_tokens: int = 2048,
-        temperature: float = 0.0,
+        max_tokens: int = _DEFAULT_MAX_TOKENS,
+        temperature: float = _DEFAULT_TEMPERATURE,
     ) -> str:
         """Run a single LLM chat completion, stripping think blocks."""
         messages = [
@@ -561,16 +669,24 @@ class LogicAdvisor:
         bad_plan: dict[str, Any],
         problem: str,
     ) -> dict[str, Any]:
-        """Ask the model to fix a rejected formalization (single attempt)."""
+        """Ask the model to fix a rejected formalization (single attempt).
+
+        The repair speaks the same labelled-line format as the initial
+        formalization — switching the model to a different output shape
+        mid-pipeline is what the ablation showed it handles worst.
+        """
+        tool = str(bad_plan.get("tool", "prove"))
         prompt = (
             f"## Original Question\n{original_question}\n\n"
-            f"## Rejected Formalization\n```json\n"
-            f"{json.dumps(bad_plan, indent=2)}\n```\n\n"
+            f"## Rejected Translation\n{_plan_to_lines(bad_plan)}\n\n"
             f"## Why It Was Rejected\n{problem}\n\n"
-            f"Produce a corrected JSON plan."
+            f"Write the corrected lines. Every formula must be Prover9 syntax, "
+            f"never English."
         )
-        raw = await self._llm_call(system=_REPAIR_SYSTEM, user=prompt, max_tokens=1024)
-        return normalize_plan(self._parse_plan(raw))
+        raw = await self._llm_call(
+            system=_FORMALIZE_LINES_SYSTEM, user=prompt, max_tokens=_DEFAULT_MAX_TOKENS
+        )
+        return normalize_plan(parse_formalization(raw, tool))
 
     # ── Private: Solver dispatch ────────────────────────────────────────
 
@@ -636,13 +752,26 @@ class LogicAdvisor:
         try:
             return json.loads(text)
         except json.JSONDecodeError:
-            # Try to find JSON object in the text.
-            match = re.search(r"\{.*\}", text, re.DOTALL)
-            if match:
+            # Mine the reasoning text for embedded objects.  Take the LAST
+            # parseable one: the model habitually sketches candidate objects
+            # while thinking and states its real answer at the end.  A plan
+            # must name a tool, so objects without one are ignored — that
+            # skips illustrative fragments quoted from the prompt.
+            candidates = _iter_json_objects(text)
+            fallback: dict[str, Any] | None = None
+            for span in reversed(candidates):
                 try:
-                    return json.loads(match.group())
+                    parsed = json.loads(span)
                 except json.JSONDecodeError:
-                    pass
+                    continue
+                if not isinstance(parsed, dict):
+                    continue
+                if "tool" in parsed:
+                    return parsed
+                if fallback is None:
+                    fallback = parsed
+            if fallback is not None:
+                return fallback
 
             logger.warning("Failed to parse LLM plan as JSON: %s", text[:300])
             return {
@@ -724,13 +853,212 @@ class LogicAdvisor:
         max_tokens: int,
         temperature: float,
     ) -> dict[str, Any]:
-        """Run chat completion synchronously — called via to_thread."""
+        """Run chat completion synchronously — called via to_thread.
+
+        ``repeat_penalty`` is pinned to 1.0 deliberately. llama.cpp defaults
+        it to 1.1, but the TwIL-LM3 model card calls ``repetition_penalty =
+        1.0`` "load-bearing": a 1.1 penalty produced apparent 20-point
+        benchmark swings that were pure decoding artefact. A reasoning model
+        legitimately repeats tokens while working through a proof, and
+        penalising that derails the ``<think>`` block.
+        """
         assert self._model is not None  # noqa: S101
+
+        # Reset generation state before every call.  llama.cpp reuses the KV
+        # cache via longest-prefix matching, and every advisor prompt shares
+        # the same long system-prompt prefix.  Left alone, the FIRST call on a
+        # fresh model returns correct FOL and every subsequent one degrades to
+        # echoing the question back as plain English — deterministically, so
+        # it reads like a model-quality problem rather than stale state.  The
+        # advisor is long-lived inside the MCP server, so this hit every query
+        # after the first.
+        self._reset_model_state()
+
         return self._model.create_chat_completion(
             messages=messages,
             max_tokens=max_tokens,
             temperature=temperature,
+            repeat_penalty=_REPEAT_PENALTY,
         )
+
+    def _reset_model_state(self) -> None:
+        """Clear token history and KV cache so each call starts clean."""
+        model = self._model
+        if model is None:
+            return
+
+        reset = getattr(model, "reset", None)
+        if callable(reset):
+            reset()
+
+        # Belt and braces: drop the KV cache itself.  The private handle moved
+        # between llama-cpp-python versions, so probe rather than assume.
+        ctx = getattr(model, "_ctx", None)
+        for name in ("kv_cache_clear", "kv_self_clear"):
+            clear = getattr(ctx, name, None)
+            if callable(clear):
+                clear()
+                break
+
+
+_VALID_TOOLS = frozenset(
+    {
+        "prove",
+        "find_model",
+        "find_counterexample",
+        "check_contingency",
+        "check_well_formed",
+    }
+)
+
+# "PREMISE: all x (p(x))" → ("premise", "all x (p(x))")
+_LINE_RE = re.compile(
+    r"^\s*(PREMISE|GOAL|FORMULA|DOMAIN|STATEMENT)\s*:\s*(.+?)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+# Questions that explicitly ask for a world/model rather than a proof.
+_MODEL_REQUEST_RE = re.compile(
+    r"\b(find|give|show|construct|is there)\b[^.?]*\b"
+    r"(model|world|interpretation|structure|example)\b|\bsatisfiab|\bconsistent\b",
+    re.IGNORECASE,
+)
+_COUNTEREXAMPLE_REQUEST_RE = re.compile(
+    r"\bcounter-?example\b|\bdisprove\b|\brefute\b", re.IGNORECASE
+)
+
+
+def infer_tool(question: str, plan_parts: dict[str, Any]) -> str:
+    """Choose a solver tool from the question and the translated formulas.
+
+    Deliberately deterministic rather than a second LLM call.  A separate
+    "name the tool" request measured worse than useless on this model: it
+    opens a ``<think>`` block before answering, so any budget small enough to
+    be cheap truncates before the answer, and every question came back
+    ``none``.  The translation already carries the answer — a GOAL means
+    there is something to prove, a bare FORMULA means propositional work,
+    premises alone mean model finding — so read it from there and use the
+    question only to distinguish the two Mace4 modes.
+
+    Args:
+        question: The original natural-language question.
+        plan_parts: Parsed line output with ``premises``/``goal``/``formula``.
+
+    Returns:
+        One of :data:`_VALID_TOOLS`.
+    """
+    if plan_parts.get("formula"):
+        return "check_contingency"
+
+    has_goal = bool(plan_parts.get("goal"))
+    if has_goal:
+        if _COUNTEREXAMPLE_REQUEST_RE.search(question):
+            return "find_counterexample"
+        return "prove"
+
+    if plan_parts.get("premises"):
+        if _MODEL_REQUEST_RE.search(question):
+            return "find_model"
+        # Premises with nothing to prove: satisfiability is the only
+        # question left worth asking.
+        return "find_model"
+
+    return "none"
+
+
+def parse_formalization(raw: str, question: str = "", tool: str = "") -> dict[str, Any]:
+    """Turn labelled translation lines into a solver plan.
+
+    Falls back to JSON extraction, since the model occasionally answers in
+    the JSON shape rather than the line shape.
+
+    Args:
+        raw: The model's formalization reply.
+        question: Original question, used to pick between Mace4 modes.
+        tool: Force a specific tool instead of inferring one (used by the
+            repair path, which must not switch tools mid-flight).
+
+    Returns:
+        A plan dict, or ``{"tool": "none", ...}`` if nothing usable was found.
+    """
+    text = _strip_think_blocks(raw)
+
+    premises: list[str] = []
+    goal = ""
+    formula = ""
+    domain: int | None = None
+
+    for label, value in _LINE_RE.findall(text):
+        label = label.upper()
+        if label in {"PREMISE", "STATEMENT"}:
+            premises.append(value)
+        elif label == "GOAL":
+            goal = value
+        elif label == "FORMULA":
+            formula = value
+        elif label == "DOMAIN":
+            try:
+                domain = int(value)
+            except ValueError:
+                domain = None
+
+    if not premises and not goal and not formula:
+        # The model ignored the line format — try the JSON shape.
+        fallback = LogicAdvisor._parse_plan(text)
+        if fallback.get("tool") not in (None, "none"):
+            return fallback
+        if re.search(r"^\s*NONE\s*$", text, re.IGNORECASE | re.MULTILINE):
+            return {
+                "tool": "none",
+                "reason": "This is not a logic problem the solver can take.",
+            }
+        return {
+            "tool": "none",
+            "reason": (
+                "The question could not be translated into logic. The model "
+                f"replied: {text[:200]}"
+            ),
+        }
+
+    tool = tool or infer_tool(
+        question, {"premises": premises, "goal": goal, "formula": formula}
+    )
+
+    plan: dict[str, Any] = {"tool": tool}
+    if tool == "check_contingency":
+        plan["formula"] = formula or goal or (premises[0] if premises else "")
+    elif tool == "check_well_formed":
+        plan["statements"] = premises or ([goal] if goal else [])
+    else:
+        plan["premises"] = premises
+        if tool in {"prove", "find_counterexample"}:
+            plan["conclusion"] = goal
+        if tool == "find_model" and domain is not None:
+            plan["domain_size"] = domain
+
+    # prove/find_counterexample without a goal is not runnable.
+    if tool in {"prove", "find_counterexample"} and not plan.get("conclusion"):
+        return {
+            "tool": "none",
+            "reason": "No GOAL line was produced, so there is nothing to prove.",
+        }
+
+    return plan
+
+
+def _plan_to_lines(plan: dict[str, Any]) -> str:
+    """Render a plan back into the labelled-line format, for repair prompts."""
+    lines: list[str] = []
+    for premise in plan.get("premises", []) or plan.get("statements", []):
+        lines.append(f"PREMISE: {premise}")
+    if plan.get("conclusion"):
+        lines.append(f"GOAL: {plan['conclusion']}")
+    if plan.get("formula"):
+        lines.append(f"FORMULA: {plan['formula']}")
+    if plan.get("domain_size") is not None:
+        lines.append(f"DOMAIN: {plan['domain_size']}")
+    return "\n".join(lines) or "(nothing usable was produced)"
 
 
 def _is_solver_error(output: dict[str, Any]) -> bool:
@@ -748,5 +1076,54 @@ def _is_solver_error(output: dict[str, Any]) -> bool:
 
 
 def _strip_think_blocks(text: str) -> str:
-    """Remove ``<think>…</think>`` reasoning blocks from model output."""
-    return _THINK_RE.sub("", text).strip()
+    """Remove ``<think>…</think>`` reasoning blocks from model output.
+
+    Closed blocks are removed outright.  An *unterminated* ``<think>`` is a
+    different situation: the model never emitted the closing tag but usually
+    did produce its answer inside the block, so dropping everything after the
+    tag would throw the answer away.  Only the tag itself is removed, leaving
+    the content for :meth:`LogicAdvisor._parse_plan` to mine.
+    """
+    cleaned = _THINK_RE.sub("", text)
+    if "</think>" not in cleaned:
+        cleaned = _OPEN_THINK_RE.sub("", cleaned)
+    return cleaned.strip()
+
+
+def _iter_json_objects(text: str) -> list[str]:
+    r"""Return every balanced ``{...}`` span in ``text``, in order.
+
+    A greedy ``\{.*\}`` regex spans from the first brace to the last, which
+    swallows prose whenever the model shows an illustrative object before its
+    real answer.  Brace matching (string- and escape-aware) finds each
+    candidate separately instead.
+    """
+    spans: list[str] = []
+    depth = 0
+    start = -1
+    in_string = False
+    escaped = False
+
+    for i, ch in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}" and depth > 0:
+            depth -= 1
+            if depth == 0 and start >= 0:
+                spans.append(text[start : i + 1])
+                start = -1
+
+    return spans
