@@ -56,7 +56,7 @@ async def test_stdio_server_runs_prover9_and_mace4_through_mcp(
                     "conclusion": "mortal(socrates)",
                 },
             )
-            assert proof.isError is False
+            assert proof.is_error is False
             assert _json_result(proof)["result"] == "proved"
 
             model = await session.call_tool(
@@ -66,7 +66,7 @@ async def test_stdio_server_runs_prover9_and_mace4_through_mcp(
                     "domain_size": 2,
                 },
             )
-            assert model.isError is False
+            assert model.is_error is False
             assert _json_result(model)["result"] == "model_found"
 
             counterexample = await session.call_tool(
@@ -76,7 +76,7 @@ async def test_stdio_server_runs_prover9_and_mace4_through_mcp(
                     "conclusion": "q(a)",
                 },
             )
-            assert counterexample.isError is False
+            assert counterexample.is_error is False
             counterexample_payload = _json_result(counterexample)
             assert counterexample_payload["result"] == "model_found"
             assert counterexample_payload["decided"] is True
@@ -87,7 +87,7 @@ async def test_stdio_server_runs_prover9_and_mace4_through_mcp(
                 "find_model",
                 {"premises": ["p(a)", "-p(a)"]},
             )
-            assert contradiction.isError is False
+            assert contradiction.is_error is False
             contradiction_payload = _json_result(contradiction)
             assert contradiction_payload["result"] == "no_model_found"
             assert contradiction_payload["decided"] is True
@@ -98,7 +98,7 @@ async def test_stdio_server_runs_prover9_and_mace4_through_mcp(
                 "find_counterexample",
                 {"premises": ["p(a)"], "conclusion": "p(a)"},
             )
-            assert valid_argument.isError is False
+            assert valid_argument.is_error is False
             valid_payload = _json_result(valid_argument)
             assert valid_payload["result"] == "no_model_found"
             assert valid_payload["decided"] is True
@@ -114,7 +114,7 @@ async def test_stdio_server_runs_prover9_and_mace4_through_mcp(
                     "conclusion": "p(a)",
                 },
             )
-            assert non_entailment.isError is False
+            assert non_entailment.is_error is False
             non_entailment_payload = _json_result(non_entailment)
             assert non_entailment_payload["result"] == "model_found"
             assert non_entailment_payload["decided"] is True
@@ -125,7 +125,7 @@ async def test_stdio_server_runs_prover9_and_mace4_through_mcp(
                 "find_model",
                 {"premises": ["all x exists y (x != y)"]},
             )
-            assert monadic_model.isError is False
+            assert monadic_model.is_error is False
             monadic_payload = _json_result(monadic_model)
             assert monadic_payload["result"] == "model_found"
             assert monadic_payload["decided"] is True
@@ -142,7 +142,7 @@ async def test_stdio_server_runs_prover9_and_mace4_through_mcp(
                     ]
                 },
             )
-            assert impossible_monadic.isError is False
+            assert impossible_monadic.is_error is False
             impossible_payload = _json_result(impossible_monadic)
             assert impossible_payload["result"] == "no_model_found"
             assert impossible_payload["decided"] is True

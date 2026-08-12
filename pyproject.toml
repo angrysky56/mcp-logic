@@ -3,12 +3,11 @@ name = "mcp_logic"
 version = "0.1.0"
 description = "MCP server for logical reasoning using Prover9"
 requires-python = ">=3.10"
-# mcp is capped below 2: SDK 2.0 replaced the low-level Server's
-# decorator handlers (@server.list_tools) with constructor on_* params, so
-# an unpinned install resolves 2.x and the server dies at import with
-# AttributeError. Lift the cap together with the port — see
+# Port to MCP SDK v2.0 (M2 migration). The low-level Server now uses
+# constructor on_* params (on_list_tools, on_call_tool) instead of
+# @server.list_tools()/@server.call_tool() decorators. See
 # .planning/phases/mcp-v2-migration-plan.md
-dependencies = ["mcp>=1.6,<2", "pydantic>=2.0.0", "pytest-asyncio"]
+dependencies = ["mcp>=2,<3", "pydantic>=2.0.0", "pytest-asyncio"]
 
 [project.optional-dependencies]
 advisor = ["llama-cpp-python>=0.3.0", "huggingface-hub>=0.24.0"]

@@ -16,8 +16,8 @@ from typing import Any
 
 import mcp.server.stdio
 import mcp.types as types
-from mcp.server import NotificationOptions, Server
-from mcp.server.models import InitializationOptions
+from contextlib import asynccontextmanager
+from mcp.server import Server
 
 from mcp_logic.categorical_helpers import (
     CategoricalHelpers,
@@ -509,6 +509,799 @@ class _SolverBridge:
         }
 
 
+
+def _ok(payload) -> types.CallToolResult:
+    """Wrap a JSON-serialisable payload in a successful CallToolResult."""
+    return types.CallToolResult(
+        content=[types.TextContent(type="text", text=json.dumps(payload, indent=2))],
+        isError=False,
+    )
+
+
+def _err(payload) -> types.CallToolResult:
+    """Wrap a JSON-serialisable error payload in a failed CallToolResult."""
+    return types.CallToolResult(
+        content=[types.TextContent(type="text", text=json.dumps(payload, indent=2))],
+        isError=True,
+    )
+
+
+async def _handle_list_tools(ctx, params) -> types.ListToolsResult:
+    """List available MCP tools (SDK v2 handler signature).
+
+    Args:
+        ctx: Server request context (unused but required by SDK v2).
+        params: Pagination params (unused).
+
+    Returns:
+        ListToolsResult containing the full tool catalogue.
+    """
+
+    tools = [
+        types.Tool(
+            name="prove",
+            description=(
+                "Prove that a conclusion follows from premises. Automatically "
+                "routes pure propositional problems to a fast analytic checker "
+                "(HCC) and first-order problems (quantifiers like 'all x', "
+                "'exists y', or predicates with arguments like p(x)) to "
+                "Prover9. Returns result='proved' with the derivation, or "
+                "result='unprovable' with a hint to try find_counterexample. "
+                "Syntax: -> (implies), <-> (iff), & (and), | (or), ~ (not); "
+                "quantifiers must scope with parens, e.g. 'all x (man(x) -> "
+                "mortal(x))'."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "premises": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Assumptions, each a well-formed formula string. "
+                            "May be an empty list to prove a logical truth."
+                        ),
+                    },
+                    "conclusion": {
+                        "type": "string",
+                        "description": "The single statement to prove.",
+                    },
+                    "verbose": {
+                        "type": "boolean",
+                        "description": (
+                            "If true, include the full raw Prover9 output. "
+                            "Default false (concise proof + stats only)."
+                        ),
+                    },
+                },
+                "required": ["premises", "conclusion"],
+            },
+        ),
+        types.Tool(
+            name="check_well_formed",
+            description="Check if logical statements are well-formed",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "statements": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Logical statements to check",
+                    }
+                },
+                "required": ["statements"],
+            },
+        ),
+        types.Tool(
+            name="find_model",
+            description=(
+                "Find a concrete finite model (a world) in which all the "
+                "given premises are simultaneously true, using Mace4. Use "
+                "this to check that a set of axioms is satisfiable / "
+                "consistent, or to see an example structure. Returns the "
+                "domain size and the interpretation of each predicate, "
+                "function, and constant. For recognized BSR or bounded "
+                "monadic theories, the tool searches the complete finite "
+                "range and returns decided=true; in that case "
+                "result='no_model_found' means no model exists at all. "
+                "Otherwise it means only that no model was found within "
+                "the searched bound. A found model carries a 'vacuity' "
+                "assessment; a degenerate empty-world model (every "
+                "predicate false everywhere) is flagged with a top-level "
+                "'warning' and only VACUOUSLY satisfies universal "
+                "conditionals — assert existence (e.g. 'exists x (P(x))') "
+                "and re-check before calling the axioms consistent."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "premises": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Formulas that must all hold in the model.",
+                    },
+                    "domain_size": {
+                        "type": "integer",
+                        "description": (
+                            "Exact domain size to search. Omit to scan sizes "
+                            "automatically and enable complete fragment "
+                            "search when a decidable fragment is recognized."
+                        ),
+                    },
+                    "verbose": {
+                        "type": "boolean",
+                        "description": "Include raw Mace4 output. Default false.",
+                    },
+                },
+                "required": ["premises"],
+            },
+        ),
+        types.Tool(
+            name="find_counterexample",
+            description=(
+                "Show that a conclusion does NOT follow from the premises by "
+                "finding a model where every premise is true but the "
+                "conclusion is false (via Mace4). This is the natural "
+                "complement to 'prove': if prove returns 'unprovable', call "
+                "this to get the concrete counterexample. result='model_found' "
+                "means the argument is invalid. For recognized BSR or "
+                "bounded monadic countermodel theories, decided=true means "
+                "the complete finite range was searched; then "
+                "'no_model_found' proves that no counterexample exists. "
+                "Without decided=true, it means none exists only up to the "
+                "searched bound. A found counter-model carries a "
+                "'vacuity' assessment; an empty-world counter-model is "
+                "flagged with a 'warning' and exhibits no real instance "
+                "where the premises hold and the conclusion fails."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "premises": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Assumptions held true in the search.",
+                    },
+                    "conclusion": {
+                        "type": "string",
+                        "description": "The statement to falsify.",
+                    },
+                    "domain_size": {
+                        "type": "integer",
+                        "description": (
+                            "Exact domain size to search. Omit to scan sizes "
+                            "automatically and enable complete fragment "
+                            "search when a decidable fragment is recognized."
+                        ),
+                    },
+                    "verbose": {
+                        "type": "boolean",
+                        "description": "Include raw Mace4 output. Default false.",
+                    },
+                },
+                "required": ["premises", "conclusion"],
+            },
+        ),
+        types.Tool(
+            name="verify_commutativity",
+            description="Verify categorical diagram commutativity",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "path_a": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of morphism names in first path",
+                    },
+                    "path_b": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of morphism names in second path",
+                    },
+                    "object_start": {"type": "string"},
+                    "object_end": {"type": "string"},
+                    "with_category_axioms": {"type": "boolean"},
+                },
+                "required": ["path_a", "path_b", "object_start", "object_end"],
+            },
+        ),
+        types.Tool(
+            name="get_category_axioms",
+            description="Get FOL axioms for category theory (category, functor, group, etc.)",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "concept": {
+                        "type": "string",
+                        "enum": [
+                            "category",
+                            "functor",
+                            "natural-transformation",
+                            "monoid",
+                            "group",
+                        ],
+                        "description": "Which concept's axioms to retrieve",
+                    },
+                    "functor_name": {
+                        "type": "string",
+                        "description": "For functor axioms: name of the functor (default: F)",
+                    },
+                },
+                "required": ["concept"],
+            },
+        ),
+        types.Tool(
+            name="check_contingency",
+            description="Check if a classical propositional formula is truth-functionally contingent using HCC",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "formula": {
+                        "type": "string",
+                        "description": "The propositional formula string to check",
+                    }
+                },
+                "required": ["formula"],
+            },
+        ),
+        types.Tool(
+            name="prove_arithmetic",
+            description=(
+                "Prove or refute a claim involving ARITHMETIC, using the Z3 "
+                "SMT solver. Use this instead of 'prove' whenever numbers "
+                "are involved — Prover9 has no theory of arithmetic and "
+                "cannot decide that 2+2=4 or that x+1 > x. Constraints are "
+                "SMT-LIB prefix notation: (> x 0), (= y (+ x 1)), "
+                "(=> (> x 0) (>= x 1)). Declare every variable in "
+                "'variables' with sort Int, Real or Bool. Returns 'proved', "
+                "or 'counterexample' with concrete values that break the "
+                "claim, or 'unknown' if Z3 could not decide. Example: "
+                "premises=['(> x 0)'], conclusion='(> (* x 2) x)', "
+                "variables={'x': 'Int'}."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "premises": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "SMT-LIB assertions taken as given",
+                    },
+                    "conclusion": {
+                        "type": "string",
+                        "description": "SMT-LIB assertion to prove",
+                    },
+                    "variables": {
+                        "type": "object",
+                        "description": (
+                            "Variable name -> sort (Int, Real or Bool), "
+                            "e.g. {'x': 'Int', 'y': 'Real'}"
+                        ),
+                    },
+                    "functions": {
+                        "type": "object",
+                        "description": (
+                            "Optional uninterpreted functions, name -> "
+                            "[arg sorts..., result sort], e.g. "
+                            "{'succ': ['Int', 'Int']}"
+                        ),
+                    },
+                    "timeout_ms": {
+                        "type": "integer",
+                        "description": "Solver timeout in ms (default 10000)",
+                    },
+                },
+                "required": ["premises", "conclusion"],
+            },
+        ),
+        types.Tool(
+            name="check_satisfiable",
+            description=(
+                "Ask Z3 whether a set of ARITHMETIC constraints can all be "
+                "true at once, and get a concrete satisfying assignment if "
+                "so. Use for consistency checks, puzzles and scheduling-"
+                "style problems over numbers. Same SMT-LIB prefix notation "
+                "as prove_arithmetic. Returns 'satisfiable' with a model, "
+                "'unsatisfiable', or 'unknown'. Example: "
+                "constraints=['(> x 0)', '(< x 10)', '(= (mod x 3) 0)'], "
+                "variables={'x': 'Int'}."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "constraints": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "SMT-LIB assertions to satisfy together",
+                    },
+                    "variables": {
+                        "type": "object",
+                        "description": "Variable name -> sort (Int, Real, Bool)",
+                    },
+                    "functions": {
+                        "type": "object",
+                        "description": "Optional uninterpreted function decls",
+                    },
+                    "timeout_ms": {
+                        "type": "integer",
+                        "description": "Solver timeout in ms (default 10000)",
+                    },
+                },
+                "required": ["constraints"],
+            },
+        ),
+        types.Tool(
+            name="abductive_explain",
+            description=(
+                "Inference to the best explanation. Given an observation and "
+                "candidate hypotheses, returns the simplest candidate that — "
+                "together with an optional background theory — logically "
+                "entails the observation and stays consistent. Each result is "
+                "flagged with 'explains' (true = it actually entails the "
+                "observation). For a real explanation, pass a 'background' "
+                "theory linking causes to the observation, e.g. "
+                "observation='wet_grass', candidates=['rained','sprinkler'], "
+                "background=['rained -> wet_grass','sprinkler -> wet_grass']. "
+                "Propositional and first-order inputs are both accepted: the "
+                "tool auto-detects quantifiers/predicate calls and routes "
+                "first-order cases to Prover9 (entailment) + Mace4 "
+                "(consistency), e.g. observation='mortal(socrates)', "
+                "candidates=['man(socrates)'], background=['all x (man(x) -> "
+                "mortal(x))']. The response 'logic' field reports which path "
+                "was used. Ranking blends logical adequacy with Occam "
+                "simplicity (VFE)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "observation": {
+                        "type": "string",
+                        "description": (
+                            "The formula that was observed (propositional or "
+                            "first-order)."
+                        ),
+                    },
+                    "candidates": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Candidate explanation formulas to rank.",
+                    },
+                    "background": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Optional background theory (domain rules) used to "
+                            "decide whether a candidate entails the observation."
+                        ),
+                    },
+                    "max_complexity": {
+                        "type": "integer",
+                        "description": "Maximum candidate complexity (default 20).",
+                    },
+                },
+                "required": ["observation", "candidates"],
+            },
+        ),
+        types.Tool(
+            name="ask_logic_advisor",
+            description=(
+                "Ask the onboard logic reasoning LLM to solve a logic "
+                "problem END-TO-END. You pose a natural-language question "
+                "and the advisor automatically: (1) formalizes it into "
+                "Prover9/Mace4 syntax, (2) runs the appropriate solver "
+                "(prove, find_model, find_counterexample, etc.), and "
+                "(3) interprets the result in plain English. Use this "
+                "when you want a complete solution without manually "
+                "constructing FOL formulas. Examples: 'Is it true that "
+                "if all humans are mortal and Socrates is human, then "
+                "Socrates is mortal?', 'Find a model where there exist "
+                "at least two distinct elements and every element has a "
+                "successor', 'Is the formula (P -> Q) <-> (-Q -> -P) a "
+                "tautology?'. For direct solver access with your own "
+                "formulas, use prove/find_model/find_counterexample "
+                "instead."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "description": (
+                            "Your logic question in natural language. Be "
+                            "as specific as possible about what you want "
+                            "to prove, check, or find."
+                        ),
+                    },
+                    "context": {
+                        "type": "string",
+                        "description": (
+                            "Optional additional context: background "
+                            "knowledge, constraints, domain-specific "
+                            "definitions, or a previous solver result "
+                            "you want debugged."
+                        ),
+                    },
+                },
+                "required": ["question"],
+            },
+        ),
+    ]
+    return types.ListToolsResult(tools=tools)
+
+
+async def _handle_call_tool(ctx, params: types.CallToolRequestParams) -> types.CallToolResult:
+    """Dispatch an MCP tool call (SDK v2 handler signature).
+
+    Extracts engine/advisor from ctx.lifespan_context, normalises arguments,
+    routes to the appropriate backend. Always returns CallToolResult, never raises.
+
+    Args:
+        ctx: Server request context with lifespan_context[engine, advisor].
+        params: Validated request parameters from the MCP runtime.
+
+    Returns:
+        CallToolResult with isError=False on success or isError=True on error.
+    """
+    engine: LogicEngine = ctx.lifespan_context["engine"]
+    advisor: LogicAdvisor = ctx.lifespan_context["advisor"]
+    name: str = params.name
+    arguments: dict = dict(params.arguments or {})
+
+    try:
+        if not arguments:
+            arguments = {}
+
+        # Normalize arguments globally for all tools
+        if "premises" in arguments:
+            premises = arguments["premises"]
+            if isinstance(premises, dict):
+                # Un-wrap if client (like Claude) passed {"item": [...]}
+                arguments["premises"] = premises.get(
+                    "item", list(premises.values())
+                )
+            elif isinstance(premises, str):
+                arguments["premises"] = [premises]
+
+        if "goal" in arguments and "conclusion" not in arguments:
+            arguments["conclusion"] = arguments["goal"]
+
+        if name == "prove":
+            conclusion = arguments.get("conclusion")
+            if not conclusion:
+                return _err(
+{
+                                "error": "Missing required argument: 'conclusion' (or 'goal')"
+                            },
+                            indent=2,
+                )
+
+            # Validate syntax first
+            all_formulas = arguments["premises"] + [conclusion]
+            validation = validate_formulas(all_formulas)
+
+            if not validation["valid"]:
+                return _ok(
+{"result": "syntax_error", "validation": validation},
+                            indent=2,
+                )
+
+            # Smart Routing: Check if propositional (CORR-02)
+            is_propositional = not any(_is_fol_formula(f) for f in all_formulas)
+
+            if is_propositional:
+                logger.info("Routing propositional proof to HCC")
+                # Construct (P1 & P2 & ...) -> G
+                if not arguments["premises"]:
+                    full_formula = arguments["conclusion"]
+                else:
+                    premises_joined = " & ".join(
+                        [f"({p})" for p in arguments["premises"]]
+                    )
+                    full_formula = (
+                        f"({premises_joined}) -> ({arguments['conclusion']})"
+                    )
+
+                try:
+                    hcc_res = check_contingency(full_formula)
+                    if hcc_res.is_tautology:
+                        results = {
+                            "result": "proved",
+                            "status": (
+                                "Valid: the conclusion is true in every "
+                                "model of the premises (the implication is "
+                                "a tautology)."
+                            ),
+                        }
+                    elif hcc_res.is_contradiction:
+                        results = {
+                            "result": "refuted",
+                            "status": (
+                                "The premises are mutually contradictory, so "
+                                "they prove anything trivially (and their "
+                                "negation holds in no model)."
+                            ),
+                        }
+                    else:
+                        results = {
+                            "result": "unprovable",
+                            "status": (
+                                "Invalid: the conclusion does not follow. "
+                                "There is at least one assignment making the "
+                                "premises true and the conclusion false."
+                            ),
+                            "hint": (
+                                "Use check_contingency on the implication, or "
+                                "find_counterexample, to inspect the falsifying "
+                                "assignment."
+                            ),
+                        }
+                    results["method"] = "HCC (propositional)"
+                    return _ok(results)
+                except ValueError as e:
+                    logger.warning(
+                        "HCC routing failed, falling back to Prover9: %s",
+                        e,
+                        exc_info=True,
+                    )
+
+            # Run proof with Prover9
+            input_file = engine.create_input_file(
+                arguments["premises"], arguments["conclusion"]
+            )
+            results = await engine.run_prover(
+                input_file, verbose=arguments.get("verbose", False)
+            )
+            results["method"] = "Prover9 (FOL)"
+            return _ok(results)
+
+        elif name == "check_well_formed":
+            validation = validate_formulas(arguments["statements"])
+            return _ok(validation)
+
+        elif name == "find_model":
+            if not engine.mace4:
+                return _err({"error": "Mace4 not available"})
+
+            domain_size = arguments.get("domain_size")
+            result = await _find_model_with_fragment(
+                engine.mace4,
+                arguments["premises"],
+                domain_size,
+                verbose=arguments.get("verbose", False),
+            )
+            return _ok(result)
+
+        elif name == "find_counterexample":
+            if not engine.mace4:
+                return _err({"error": "Mace4 not available"})
+
+            domain_size = arguments.get("domain_size")
+            result = await _find_counterexample_with_fragment(
+                engine.mace4,
+                arguments["premises"],
+                arguments["conclusion"],
+                domain_size,
+                verbose=arguments.get("verbose", False),
+            )
+            return _ok(result)
+
+        elif name == "verify_commutativity":
+            helpers = CategoricalHelpers()
+            premises, conclusion = helpers.verify_commutativity(
+                arguments["path_a"],
+                arguments["path_b"],
+                arguments["object_start"],
+                arguments["object_end"],
+            )
+
+            # Add category axioms if requested
+            if arguments.get("with_category_axioms", True):
+                cat_axioms = helpers.category_axioms()
+                premises = cat_axioms + premises
+
+            result = {
+                "premises": premises,
+                "conclusion": conclusion,
+                "note": "Use the 'prove' tool to verify commutativity",
+            }
+            return _ok(result)
+
+        elif name == "get_category_axioms":
+            helpers = CategoricalHelpers()
+            concept = arguments["concept"]
+
+            if concept == "category":
+                axioms = helpers.category_axioms()
+            elif concept == "functor":
+                functor_name = arguments.get("functor_name", "F")
+                axioms = helpers.functor_axioms(functor_name)
+            elif concept == "natural-transformation":
+                functor_f = arguments.get("functor_f", "F")
+                functor_g = arguments.get("functor_g", "G")
+                component = arguments.get("component", "alpha")
+                axioms = helpers.natural_transformation_condition(
+                    functor_f, functor_g, component
+                )
+            elif concept == "monoid":
+                axioms = monoid_axioms()
+            elif concept == "group":
+                axioms = group_axioms()
+            else:
+                axioms = []
+
+            result = {"concept": concept, "axioms": axioms}
+            return _ok(result)
+
+        elif name == "check_contingency":
+            res = check_contingency(arguments["formula"])
+            # Simplify trace for output
+            simple_trace = [
+                f"{s.rule}: {s.formula}" for s in res.proof_trace if s.formula
+            ]
+            result = {
+                "formula": arguments["formula"],
+                "is_contingent": res.is_contingent,
+                "is_tautology": res.is_tautology,
+                "is_contradiction": res.is_contradiction,
+                "message": res.message,
+                "proof_trace_summary": simple_trace,
+            }
+            return _ok(result)
+
+        elif name == "abductive_explain":
+            observation = arguments["observation"]
+            candidates = arguments["candidates"]
+            background = arguments.get("background") or []
+            max_complexity = arguments.get("max_complexity", 20)
+
+            # Smart routing: if the observation, any candidate, or any
+            # background formula is first-order, use the Prover9/Mace4
+            # path; otherwise stay on the fast propositional HCC path.
+            all_formulas = [observation, *candidates, *background]
+            is_fol = any(_is_fol_formula(f) for f in all_formulas)
+
+            if is_fol:
+                # Per-candidate FOL checks get a short timeout to keep the
+                # overall call responsive even with several candidates.
+                fol_timeout = 10
+
+                async def _prove_fn(premises: list[str], conclusion: str) -> bool:
+                    f = engine.create_input_file(premises, conclusion)
+                    r = await engine.run_prover(f, timeout=fol_timeout)
+                    return r.get("result") == "proved"
+
+                async def _model_fn(premises: list[str]) -> bool:
+                    if engine.mace4 is None:
+                        # No model finder: skip the consistency filter.
+                        return True
+                    r = await engine.mace4.find_model(premises, timeout=fol_timeout)
+                    return r.get("result") == "model_found"
+
+                res = await abductive_explain_fol(
+                    observation,
+                    candidates,
+                    _prove_fn,
+                    _model_fn,
+                    max_complexity,
+                    background,
+                )
+            else:
+                res = abductive_explain(
+                    observation,
+                    candidates,
+                    max_complexity,
+                    background,
+                )
+            if not res.best_explanation:
+                return _ok(
+{
+                                "error": res.message,
+                                "filtered_out": res.filtered_out_count,
+                            },
+                            indent=2,
+                )
+
+            result = {
+                "logic": "first_order" if is_fol else "propositional",
+                "best_explanation": res.best_explanation.formula_str,
+                "explains_observation": res.best_explanation.explains,
+                "vfe_score": res.best_explanation.vfe_score,
+                "complexity": res.best_explanation.complexity,
+                "message": res.message,
+                "ranking": [
+                    {
+                        "formula": c.formula_str,
+                        "explains": c.explains,
+                        "score": c.vfe_score,
+                        "prior": c.prior,
+                    }
+                    for c in res.all_candidates
+                ],
+            }
+            return _ok(result)
+
+        elif name in {"prove_arithmetic", "check_satisfiable"}:
+            if not z3_available():
+                return _err(
+{
+                                "error": "z3-solver is not installed",
+                                "hint": (
+                                    "Install it with: uv pip install "
+                                    "z3-solver — or use prove/find_model "
+                                    "for non-arithmetic questions."
+                                ),
+                            },
+                            indent=2,
+                )
+
+            shared = {
+                "variables": arguments.get("variables") or {},
+                "functions": arguments.get("functions") or {},
+                "timeout_ms": int(arguments.get("timeout_ms", 10_000)),
+            }
+            if name == "prove_arithmetic":
+                result = await asyncio.to_thread(
+                    check_entailment,
+                    arguments.get("premises", []),
+                    arguments.get("conclusion", ""),
+                    **shared,
+                )
+            else:
+                result = await asyncio.to_thread(
+                    check_satisfiable,
+                    arguments.get("constraints", []),
+                    **shared,
+                )
+
+            return _ok(result)
+
+        elif name == "ask_logic_advisor":
+            question = arguments.get("question", "")
+            context = arguments.get("context", "")
+            if not question:
+                return _err(
+{"error": "Missing required argument: 'question'"},
+                            indent=2,
+                )
+
+            try:
+                result = await advisor.solve(question, context)
+                response = {
+                    "answer": result.answer,
+                    # False means the solver did NOT return a verdict —
+                    # the answer is not machine-checked and must not be
+                    # presented to the user as a proof.
+                    "verified": result.verified,
+                    "formalization": result.formalization,
+                    "solver_output": result.solver_output,
+                    "steps": result.steps,
+                }
+                if not result.verified:
+                    response["warning"] = (
+                        "UNVERIFIED: the solver returned no verdict. Do "
+                        "not present this as a proved result."
+                    )
+            except AdvisorDisabledError as e:
+                response = {
+                    "error": str(e),
+                    "hint": (
+                        "The onboard logic advisor LLM is disabled. "
+                        "Restart the server without --no-advisor to "
+                        "enable it, or use the prove/find_model tools "
+                        "directly with your own FOL formulas."
+                    ),
+                }
+
+            return _ok(response)
+
+        else:
+            raise ValueError(f"Unknown tool: {name}")
+
+    except (KeyError, ValueError, RuntimeError) as e:
+        logger.error("Tool error: %s", e, exc_info=True)
+        return _ok({"error": str(e), "type": type(e).__name__})
+
+
 async def main(
     prover_path: str,
     log_level: str = "INFO",
@@ -542,840 +1335,26 @@ async def main(
     else:
         logger.info("Logic advisor enabled (model will lazy-load on first query)")
 
-    server = Server("logic-manager")
-
-    @server.list_tools()
-    async def handle_list_tools() -> list[types.Tool]:
-        """List available tools"""
-        tools = [
-            types.Tool(
-                name="prove",
-                description=(
-                    "Prove that a conclusion follows from premises. Automatically "
-                    "routes pure propositional problems to a fast analytic checker "
-                    "(HCC) and first-order problems (quantifiers like 'all x', "
-                    "'exists y', or predicates with arguments like p(x)) to "
-                    "Prover9. Returns result='proved' with the derivation, or "
-                    "result='unprovable' with a hint to try find_counterexample. "
-                    "Syntax: -> (implies), <-> (iff), & (and), | (or), ~ (not); "
-                    "quantifiers must scope with parens, e.g. 'all x (man(x) -> "
-                    "mortal(x))'."
-                ),
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "premises": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": (
-                                "Assumptions, each a well-formed formula string. "
-                                "May be an empty list to prove a logical truth."
-                            ),
-                        },
-                        "conclusion": {
-                            "type": "string",
-                            "description": "The single statement to prove.",
-                        },
-                        "verbose": {
-                            "type": "boolean",
-                            "description": (
-                                "If true, include the full raw Prover9 output. "
-                                "Default false (concise proof + stats only)."
-                            ),
-                        },
-                    },
-                    "required": ["premises", "conclusion"],
-                },
-            ),
-            types.Tool(
-                name="check_well_formed",
-                description="Check if logical statements are well-formed",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "statements": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "Logical statements to check",
-                        }
-                    },
-                    "required": ["statements"],
-                },
-            ),
-            types.Tool(
-                name="find_model",
-                description=(
-                    "Find a concrete finite model (a world) in which all the "
-                    "given premises are simultaneously true, using Mace4. Use "
-                    "this to check that a set of axioms is satisfiable / "
-                    "consistent, or to see an example structure. Returns the "
-                    "domain size and the interpretation of each predicate, "
-                    "function, and constant. For recognized BSR or bounded "
-                    "monadic theories, the tool searches the complete finite "
-                    "range and returns decided=true; in that case "
-                    "result='no_model_found' means no model exists at all. "
-                    "Otherwise it means only that no model was found within "
-                    "the searched bound. A found model carries a 'vacuity' "
-                    "assessment; a degenerate empty-world model (every "
-                    "predicate false everywhere) is flagged with a top-level "
-                    "'warning' and only VACUOUSLY satisfies universal "
-                    "conditionals — assert existence (e.g. 'exists x (P(x))') "
-                    "and re-check before calling the axioms consistent."
-                ),
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "premises": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "Formulas that must all hold in the model.",
-                        },
-                        "domain_size": {
-                            "type": "integer",
-                            "description": (
-                                "Exact domain size to search. Omit to scan sizes "
-                                "automatically and enable complete fragment "
-                                "search when a decidable fragment is recognized."
-                            ),
-                        },
-                        "verbose": {
-                            "type": "boolean",
-                            "description": "Include raw Mace4 output. Default false.",
-                        },
-                    },
-                    "required": ["premises"],
-                },
-            ),
-            types.Tool(
-                name="find_counterexample",
-                description=(
-                    "Show that a conclusion does NOT follow from the premises by "
-                    "finding a model where every premise is true but the "
-                    "conclusion is false (via Mace4). This is the natural "
-                    "complement to 'prove': if prove returns 'unprovable', call "
-                    "this to get the concrete counterexample. result='model_found' "
-                    "means the argument is invalid. For recognized BSR or "
-                    "bounded monadic countermodel theories, decided=true means "
-                    "the complete finite range was searched; then "
-                    "'no_model_found' proves that no counterexample exists. "
-                    "Without decided=true, it means none exists only up to the "
-                    "searched bound. A found counter-model carries a "
-                    "'vacuity' assessment; an empty-world counter-model is "
-                    "flagged with a 'warning' and exhibits no real instance "
-                    "where the premises hold and the conclusion fails."
-                ),
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "premises": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "Assumptions held true in the search.",
-                        },
-                        "conclusion": {
-                            "type": "string",
-                            "description": "The statement to falsify.",
-                        },
-                        "domain_size": {
-                            "type": "integer",
-                            "description": (
-                                "Exact domain size to search. Omit to scan sizes "
-                                "automatically and enable complete fragment "
-                                "search when a decidable fragment is recognized."
-                            ),
-                        },
-                        "verbose": {
-                            "type": "boolean",
-                            "description": "Include raw Mace4 output. Default false.",
-                        },
-                    },
-                    "required": ["premises", "conclusion"],
-                },
-            ),
-            types.Tool(
-                name="verify_commutativity",
-                description="Verify categorical diagram commutativity",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "path_a": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "List of morphism names in first path",
-                        },
-                        "path_b": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "List of morphism names in second path",
-                        },
-                        "object_start": {"type": "string"},
-                        "object_end": {"type": "string"},
-                        "with_category_axioms": {"type": "boolean"},
-                    },
-                    "required": ["path_a", "path_b", "object_start", "object_end"],
-                },
-            ),
-            types.Tool(
-                name="get_category_axioms",
-                description="Get FOL axioms for category theory (category, functor, group, etc.)",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "concept": {
-                            "type": "string",
-                            "enum": [
-                                "category",
-                                "functor",
-                                "natural-transformation",
-                                "monoid",
-                                "group",
-                            ],
-                            "description": "Which concept's axioms to retrieve",
-                        },
-                        "functor_name": {
-                            "type": "string",
-                            "description": "For functor axioms: name of the functor (default: F)",
-                        },
-                    },
-                    "required": ["concept"],
-                },
-            ),
-            types.Tool(
-                name="check_contingency",
-                description="Check if a classical propositional formula is truth-functionally contingent using HCC",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "formula": {
-                            "type": "string",
-                            "description": "The propositional formula string to check",
-                        }
-                    },
-                    "required": ["formula"],
-                },
-            ),
-            types.Tool(
-                name="prove_arithmetic",
-                description=(
-                    "Prove or refute a claim involving ARITHMETIC, using the Z3 "
-                    "SMT solver. Use this instead of 'prove' whenever numbers "
-                    "are involved — Prover9 has no theory of arithmetic and "
-                    "cannot decide that 2+2=4 or that x+1 > x. Constraints are "
-                    "SMT-LIB prefix notation: (> x 0), (= y (+ x 1)), "
-                    "(=> (> x 0) (>= x 1)). Declare every variable in "
-                    "'variables' with sort Int, Real or Bool. Returns 'proved', "
-                    "or 'counterexample' with concrete values that break the "
-                    "claim, or 'unknown' if Z3 could not decide. Example: "
-                    "premises=['(> x 0)'], conclusion='(> (* x 2) x)', "
-                    "variables={'x': 'Int'}."
-                ),
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "premises": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "SMT-LIB assertions taken as given",
-                        },
-                        "conclusion": {
-                            "type": "string",
-                            "description": "SMT-LIB assertion to prove",
-                        },
-                        "variables": {
-                            "type": "object",
-                            "description": (
-                                "Variable name -> sort (Int, Real or Bool), "
-                                "e.g. {'x': 'Int', 'y': 'Real'}"
-                            ),
-                        },
-                        "functions": {
-                            "type": "object",
-                            "description": (
-                                "Optional uninterpreted functions, name -> "
-                                "[arg sorts..., result sort], e.g. "
-                                "{'succ': ['Int', 'Int']}"
-                            ),
-                        },
-                        "timeout_ms": {
-                            "type": "integer",
-                            "description": "Solver timeout in ms (default 10000)",
-                        },
-                    },
-                    "required": ["premises", "conclusion"],
-                },
-            ),
-            types.Tool(
-                name="check_satisfiable",
-                description=(
-                    "Ask Z3 whether a set of ARITHMETIC constraints can all be "
-                    "true at once, and get a concrete satisfying assignment if "
-                    "so. Use for consistency checks, puzzles and scheduling-"
-                    "style problems over numbers. Same SMT-LIB prefix notation "
-                    "as prove_arithmetic. Returns 'satisfiable' with a model, "
-                    "'unsatisfiable', or 'unknown'. Example: "
-                    "constraints=['(> x 0)', '(< x 10)', '(= (mod x 3) 0)'], "
-                    "variables={'x': 'Int'}."
-                ),
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "constraints": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "SMT-LIB assertions to satisfy together",
-                        },
-                        "variables": {
-                            "type": "object",
-                            "description": "Variable name -> sort (Int, Real, Bool)",
-                        },
-                        "functions": {
-                            "type": "object",
-                            "description": "Optional uninterpreted function decls",
-                        },
-                        "timeout_ms": {
-                            "type": "integer",
-                            "description": "Solver timeout in ms (default 10000)",
-                        },
-                    },
-                    "required": ["constraints"],
-                },
-            ),
-            types.Tool(
-                name="abductive_explain",
-                description=(
-                    "Inference to the best explanation. Given an observation and "
-                    "candidate hypotheses, returns the simplest candidate that — "
-                    "together with an optional background theory — logically "
-                    "entails the observation and stays consistent. Each result is "
-                    "flagged with 'explains' (true = it actually entails the "
-                    "observation). For a real explanation, pass a 'background' "
-                    "theory linking causes to the observation, e.g. "
-                    "observation='wet_grass', candidates=['rained','sprinkler'], "
-                    "background=['rained -> wet_grass','sprinkler -> wet_grass']. "
-                    "Propositional and first-order inputs are both accepted: the "
-                    "tool auto-detects quantifiers/predicate calls and routes "
-                    "first-order cases to Prover9 (entailment) + Mace4 "
-                    "(consistency), e.g. observation='mortal(socrates)', "
-                    "candidates=['man(socrates)'], background=['all x (man(x) -> "
-                    "mortal(x))']. The response 'logic' field reports which path "
-                    "was used. Ranking blends logical adequacy with Occam "
-                    "simplicity (VFE)."
-                ),
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "observation": {
-                            "type": "string",
-                            "description": (
-                                "The formula that was observed (propositional or "
-                                "first-order)."
-                            ),
-                        },
-                        "candidates": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "Candidate explanation formulas to rank.",
-                        },
-                        "background": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": (
-                                "Optional background theory (domain rules) used to "
-                                "decide whether a candidate entails the observation."
-                            ),
-                        },
-                        "max_complexity": {
-                            "type": "integer",
-                            "description": "Maximum candidate complexity (default 20).",
-                        },
-                    },
-                    "required": ["observation", "candidates"],
-                },
-            ),
-            types.Tool(
-                name="ask_logic_advisor",
-                description=(
-                    "Ask the onboard logic reasoning LLM to solve a logic "
-                    "problem END-TO-END. You pose a natural-language question "
-                    "and the advisor automatically: (1) formalizes it into "
-                    "Prover9/Mace4 syntax, (2) runs the appropriate solver "
-                    "(prove, find_model, find_counterexample, etc.), and "
-                    "(3) interprets the result in plain English. Use this "
-                    "when you want a complete solution without manually "
-                    "constructing FOL formulas. Examples: 'Is it true that "
-                    "if all humans are mortal and Socrates is human, then "
-                    "Socrates is mortal?', 'Find a model where there exist "
-                    "at least two distinct elements and every element has a "
-                    "successor', 'Is the formula (P -> Q) <-> (-Q -> -P) a "
-                    "tautology?'. For direct solver access with your own "
-                    "formulas, use prove/find_model/find_counterexample "
-                    "instead."
-                ),
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "question": {
-                            "type": "string",
-                            "description": (
-                                "Your logic question in natural language. Be "
-                                "as specific as possible about what you want "
-                                "to prove, check, or find."
-                            ),
-                        },
-                        "context": {
-                            "type": "string",
-                            "description": (
-                                "Optional additional context: background "
-                                "knowledge, constraints, domain-specific "
-                                "definitions, or a previous solver result "
-                                "you want debugged."
-                            ),
-                        },
-                    },
-                    "required": ["question"],
-                },
-            ),
-        ]
-        return tools
-
-    @server.call_tool()
-    async def handle_call_tool(
-        name: str, arguments: dict[str, Any] | None
-    ) -> list[types.TextContent | types.ImageContent | types.EmbeddedResource]:
-        """Handle tool execution requests"""
-        try:
-            if not arguments:
-                arguments = {}
-
-            # Normalize arguments globally for all tools
-            if "premises" in arguments:
-                premises = arguments["premises"]
-                if isinstance(premises, dict):
-                    # Un-wrap if client (like Claude) passed {"item": [...]}
-                    arguments["premises"] = premises.get(
-                        "item", list(premises.values())
-                    )
-                elif isinstance(premises, str):
-                    arguments["premises"] = [premises]
-
-            if "goal" in arguments and "conclusion" not in arguments:
-                arguments["conclusion"] = arguments["goal"]
-
-            if name == "prove":
-                conclusion = arguments.get("conclusion")
-                if not conclusion:
-                    return [
-                        types.TextContent(
-                            type="text",
-                            text=json.dumps(
-                                {
-                                    "error": "Missing required argument: 'conclusion' (or 'goal')"
-                                },
-                                indent=2,
-                            ),
-                        )
-                    ]
-
-                # Validate syntax first
-                all_formulas = arguments["premises"] + [conclusion]
-                validation = validate_formulas(all_formulas)
-
-                if not validation["valid"]:
-                    return [
-                        types.TextContent(
-                            type="text",
-                            text=json.dumps(
-                                {"result": "syntax_error", "validation": validation},
-                                indent=2,
-                            ),
-                        )
-                    ]
-
-                # Smart Routing: Check if propositional (CORR-02)
-                is_propositional = not any(_is_fol_formula(f) for f in all_formulas)
-
-                if is_propositional:
-                    logger.info("Routing propositional proof to HCC")
-                    # Construct (P1 & P2 & ...) -> G
-                    if not arguments["premises"]:
-                        full_formula = arguments["conclusion"]
-                    else:
-                        premises_joined = " & ".join(
-                            [f"({p})" for p in arguments["premises"]]
-                        )
-                        full_formula = (
-                            f"({premises_joined}) -> ({arguments['conclusion']})"
-                        )
-
-                    try:
-                        hcc_res = check_contingency(full_formula)
-                        if hcc_res.is_tautology:
-                            results = {
-                                "result": "proved",
-                                "status": (
-                                    "Valid: the conclusion is true in every "
-                                    "model of the premises (the implication is "
-                                    "a tautology)."
-                                ),
-                            }
-                        elif hcc_res.is_contradiction:
-                            results = {
-                                "result": "refuted",
-                                "status": (
-                                    "The premises are mutually contradictory, so "
-                                    "they prove anything trivially (and their "
-                                    "negation holds in no model)."
-                                ),
-                            }
-                        else:
-                            results = {
-                                "result": "unprovable",
-                                "status": (
-                                    "Invalid: the conclusion does not follow. "
-                                    "There is at least one assignment making the "
-                                    "premises true and the conclusion false."
-                                ),
-                                "hint": (
-                                    "Use check_contingency on the implication, or "
-                                    "find_counterexample, to inspect the falsifying "
-                                    "assignment."
-                                ),
-                            }
-                        results["method"] = "HCC (propositional)"
-                        return [
-                            types.TextContent(
-                                type="text", text=json.dumps(results, indent=2)
-                            )
-                        ]
-                    except ValueError as e:
-                        logger.warning(
-                            "HCC routing failed, falling back to Prover9: %s",
-                            e,
-                            exc_info=True,
-                        )
-
-                # Run proof with Prover9
-                input_file = engine.create_input_file(
-                    arguments["premises"], arguments["conclusion"]
-                )
-                results = await engine.run_prover(
-                    input_file, verbose=arguments.get("verbose", False)
-                )
-                results["method"] = "Prover9 (FOL)"
-                return [
-                    types.TextContent(type="text", text=json.dumps(results, indent=2))
-                ]
-
-            elif name == "check_well_formed":
-                validation = validate_formulas(arguments["statements"])
-                return [
-                    types.TextContent(
-                        type="text", text=json.dumps(validation, indent=2)
-                    )
-                ]
-
-            elif name == "find_model":
-                if not engine.mace4:
-                    return [
-                        types.TextContent(
-                            type="text",
-                            text=json.dumps({"error": "Mace4 not available"}),
-                        )
-                    ]
-
-                domain_size = arguments.get("domain_size")
-                result = await _find_model_with_fragment(
-                    engine.mace4,
-                    arguments["premises"],
-                    domain_size,
-                    verbose=arguments.get("verbose", False),
-                )
-                return [
-                    types.TextContent(type="text", text=json.dumps(result, indent=2))
-                ]
-
-            elif name == "find_counterexample":
-                if not engine.mace4:
-                    return [
-                        types.TextContent(
-                            type="text",
-                            text=json.dumps({"error": "Mace4 not available"}),
-                        )
-                    ]
-
-                domain_size = arguments.get("domain_size")
-                result = await _find_counterexample_with_fragment(
-                    engine.mace4,
-                    arguments["premises"],
-                    arguments["conclusion"],
-                    domain_size,
-                    verbose=arguments.get("verbose", False),
-                )
-                return [
-                    types.TextContent(type="text", text=json.dumps(result, indent=2))
-                ]
-
-            elif name == "verify_commutativity":
-                helpers = CategoricalHelpers()
-                premises, conclusion = helpers.verify_commutativity(
-                    arguments["path_a"],
-                    arguments["path_b"],
-                    arguments["object_start"],
-                    arguments["object_end"],
-                )
-
-                # Add category axioms if requested
-                if arguments.get("with_category_axioms", True):
-                    cat_axioms = helpers.category_axioms()
-                    premises = cat_axioms + premises
-
-                result = {
-                    "premises": premises,
-                    "conclusion": conclusion,
-                    "note": "Use the 'prove' tool to verify commutativity",
-                }
-                return [
-                    types.TextContent(type="text", text=json.dumps(result, indent=2))
-                ]
-
-            elif name == "get_category_axioms":
-                helpers = CategoricalHelpers()
-                concept = arguments["concept"]
-
-                if concept == "category":
-                    axioms = helpers.category_axioms()
-                elif concept == "functor":
-                    functor_name = arguments.get("functor_name", "F")
-                    axioms = helpers.functor_axioms(functor_name)
-                elif concept == "natural-transformation":
-                    functor_f = arguments.get("functor_f", "F")
-                    functor_g = arguments.get("functor_g", "G")
-                    component = arguments.get("component", "alpha")
-                    axioms = helpers.natural_transformation_condition(
-                        functor_f, functor_g, component
-                    )
-                elif concept == "monoid":
-                    axioms = monoid_axioms()
-                elif concept == "group":
-                    axioms = group_axioms()
-                else:
-                    axioms = []
-
-                result = {"concept": concept, "axioms": axioms}
-                return [
-                    types.TextContent(type="text", text=json.dumps(result, indent=2))
-                ]
-
-            elif name == "check_contingency":
-                res = check_contingency(arguments["formula"])
-                # Simplify trace for output
-                simple_trace = [
-                    f"{s.rule}: {s.formula}" for s in res.proof_trace if s.formula
-                ]
-                result = {
-                    "formula": arguments["formula"],
-                    "is_contingent": res.is_contingent,
-                    "is_tautology": res.is_tautology,
-                    "is_contradiction": res.is_contradiction,
-                    "message": res.message,
-                    "proof_trace_summary": simple_trace,
-                }
-                return [
-                    types.TextContent(type="text", text=json.dumps(result, indent=2))
-                ]
-
-            elif name == "abductive_explain":
-                observation = arguments["observation"]
-                candidates = arguments["candidates"]
-                background = arguments.get("background") or []
-                max_complexity = arguments.get("max_complexity", 20)
-
-                # Smart routing: if the observation, any candidate, or any
-                # background formula is first-order, use the Prover9/Mace4
-                # path; otherwise stay on the fast propositional HCC path.
-                all_formulas = [observation, *candidates, *background]
-                is_fol = any(_is_fol_formula(f) for f in all_formulas)
-
-                if is_fol:
-                    # Per-candidate FOL checks get a short timeout to keep the
-                    # overall call responsive even with several candidates.
-                    fol_timeout = 10
-
-                    async def _prove_fn(premises: list[str], conclusion: str) -> bool:
-                        f = engine.create_input_file(premises, conclusion)
-                        r = await engine.run_prover(f, timeout=fol_timeout)
-                        return r.get("result") == "proved"
-
-                    async def _model_fn(premises: list[str]) -> bool:
-                        if engine.mace4 is None:
-                            # No model finder: skip the consistency filter.
-                            return True
-                        r = await engine.mace4.find_model(premises, timeout=fol_timeout)
-                        return r.get("result") == "model_found"
-
-                    res = await abductive_explain_fol(
-                        observation,
-                        candidates,
-                        _prove_fn,
-                        _model_fn,
-                        max_complexity,
-                        background,
-                    )
-                else:
-                    res = abductive_explain(
-                        observation,
-                        candidates,
-                        max_complexity,
-                        background,
-                    )
-                if not res.best_explanation:
-                    return [
-                        types.TextContent(
-                            type="text",
-                            text=json.dumps(
-                                {
-                                    "error": res.message,
-                                    "filtered_out": res.filtered_out_count,
-                                },
-                                indent=2,
-                            ),
-                        )
-                    ]
-
-                result = {
-                    "logic": "first_order" if is_fol else "propositional",
-                    "best_explanation": res.best_explanation.formula_str,
-                    "explains_observation": res.best_explanation.explains,
-                    "vfe_score": res.best_explanation.vfe_score,
-                    "complexity": res.best_explanation.complexity,
-                    "message": res.message,
-                    "ranking": [
-                        {
-                            "formula": c.formula_str,
-                            "explains": c.explains,
-                            "score": c.vfe_score,
-                            "prior": c.prior,
-                        }
-                        for c in res.all_candidates
-                    ],
-                }
-                return [
-                    types.TextContent(type="text", text=json.dumps(result, indent=2))
-                ]
-
-            elif name in {"prove_arithmetic", "check_satisfiable"}:
-                if not z3_available():
-                    return [
-                        types.TextContent(
-                            type="text",
-                            text=json.dumps(
-                                {
-                                    "error": "z3-solver is not installed",
-                                    "hint": (
-                                        "Install it with: uv pip install "
-                                        "z3-solver — or use prove/find_model "
-                                        "for non-arithmetic questions."
-                                    ),
-                                },
-                                indent=2,
-                            ),
-                        )
-                    ]
-
-                shared = {
-                    "variables": arguments.get("variables") or {},
-                    "functions": arguments.get("functions") or {},
-                    "timeout_ms": int(arguments.get("timeout_ms", 10_000)),
-                }
-                if name == "prove_arithmetic":
-                    result = await asyncio.to_thread(
-                        check_entailment,
-                        arguments.get("premises", []),
-                        arguments.get("conclusion", ""),
-                        **shared,
-                    )
-                else:
-                    result = await asyncio.to_thread(
-                        check_satisfiable,
-                        arguments.get("constraints", []),
-                        **shared,
-                    )
-
-                return [
-                    types.TextContent(type="text", text=json.dumps(result, indent=2))
-                ]
-
-            elif name == "ask_logic_advisor":
-                question = arguments.get("question", "")
-                context = arguments.get("context", "")
-                if not question:
-                    return [
-                        types.TextContent(
-                            type="text",
-                            text=json.dumps(
-                                {"error": "Missing required argument: 'question'"},
-                                indent=2,
-                            ),
-                        )
-                    ]
-
-                try:
-                    result = await advisor.solve(question, context)
-                    response = {
-                        "answer": result.answer,
-                        # False means the solver did NOT return a verdict —
-                        # the answer is not machine-checked and must not be
-                        # presented to the user as a proof.
-                        "verified": result.verified,
-                        "formalization": result.formalization,
-                        "solver_output": result.solver_output,
-                        "steps": result.steps,
-                    }
-                    if not result.verified:
-                        response["warning"] = (
-                            "UNVERIFIED: the solver returned no verdict. Do "
-                            "not present this as a proved result."
-                        )
-                except AdvisorDisabledError as e:
-                    response = {
-                        "error": str(e),
-                        "hint": (
-                            "The onboard logic advisor LLM is disabled. "
-                            "Restart the server without --no-advisor to "
-                            "enable it, or use the prove/find_model tools "
-                            "directly with your own FOL formulas."
-                        ),
-                    }
-
-                return [
-                    types.TextContent(type="text", text=json.dumps(response, indent=2))
-                ]
-
-            else:
-                raise ValueError(f"Unknown tool: {name}")
-
-        except (KeyError, ValueError, RuntimeError) as e:
-            logger.error("Tool error: %s", e, exc_info=True)
-            return [
-                types.TextContent(
-                    type="text",
-                    text=json.dumps({"error": str(e), "type": type(e).__name__}),
-                )
-            ]
-
     async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
         logger.info("Server running with stdio transport")
+
+        # SDK v2: handlers passed as constructor args; lifespan context carries
+        # engine + advisor so _handle_call_tool can reach them without closures.
+        @asynccontextmanager
+        async def _lifespan(_server):
+            yield {"engine": engine, "advisor": advisor}
+
+        server = Server(
+            "logic-manager",
+            on_list_tools=_handle_list_tools,
+            on_call_tool=_handle_call_tool,
+            lifespan=_lifespan,
+        )
+
         await server.run(
             read_stream,
             write_stream,
-            InitializationOptions(
-                server_name="logic",
-                server_version="0.2.0",
-                capabilities=server.get_capabilities(
-                    notification_options=NotificationOptions(),
-                    experimental_capabilities={},
-                ),
-            ),
+            server.create_initialization_options(),
         )
 
 
