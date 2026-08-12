@@ -11,12 +11,12 @@ import logging
 import os
 import re
 import tempfile
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
 import mcp.server.stdio
 import mcp.types as types
-from contextlib import asynccontextmanager
 from mcp.server import Server
 
 from mcp_logic.categorical_helpers import (
@@ -509,24 +509,41 @@ class _SolverBridge:
         }
 
 
+def _ok(payload: Any) -> types.CallToolResult:
+    """Wrap a JSON-serialisable payload in a successful CallToolResult.
 
-def _ok(payload) -> types.CallToolResult:
-    """Wrap a JSON-serialisable payload in a successful CallToolResult."""
+    Args:
+        payload: Any JSON-serialisable value.
+
+    Returns:
+        ``CallToolResult`` with a single ``TextContent`` item and
+        ``is_error=False``.
+    """
     return types.CallToolResult(
         content=[types.TextContent(type="text", text=json.dumps(payload, indent=2))],
-        isError=False,
+        is_error=False,
     )
 
 
-def _err(payload) -> types.CallToolResult:
-    """Wrap a JSON-serialisable error payload in a failed CallToolResult."""
+def _err(payload: Any) -> types.CallToolResult:
+    """Wrap a JSON-serialisable error payload in a failed CallToolResult.
+
+    Args:
+        payload: Any JSON-serialisable value describing the error.
+
+    Returns:
+        ``CallToolResult`` with a single ``TextContent`` item and
+        ``is_error=True``.
+    """
     return types.CallToolResult(
         content=[types.TextContent(type="text", text=json.dumps(payload, indent=2))],
-        isError=True,
+        is_error=True,
     )
 
 
-async def _handle_list_tools(ctx, params) -> types.ListToolsResult:
+async def _handle_list_tools(
+    ctx: Any, params: types.PaginatedRequestParams | None = None
+) -> types.ListToolsResult:
     """List available MCP tools (SDK v2 handler signature).
 
     Args:
@@ -929,7 +946,9 @@ async def _handle_list_tools(ctx, params) -> types.ListToolsResult:
     return types.ListToolsResult(tools=tools)
 
 
-async def _handle_call_tool(ctx, params: types.CallToolRequestParams) -> types.CallToolResult:
+async def _handle_call_tool(
+    ctx: Any, params: types.CallToolRequestParams
+) -> types.CallToolResult:
     """Dispatch an MCP tool call (SDK v2 handler signature).
 
     Extracts engine/advisor from ctx.lifespan_context, normalises arguments,
@@ -940,12 +959,12 @@ async def _handle_call_tool(ctx, params: types.CallToolRequestParams) -> types.C
         params: Validated request parameters from the MCP runtime.
 
     Returns:
-        CallToolResult with isError=False on success or isError=True on error.
+        CallToolResult with is_error=False on success or is_error=True on error.
     """
     engine: LogicEngine = ctx.lifespan_context["engine"]
     advisor: LogicAdvisor = ctx.lifespan_context["advisor"]
     name: str = params.name
-    arguments: dict = dict(params.arguments or {})
+    arguments: dict[str, Any] = dict(params.arguments or {})
 
     try:
         if not arguments:
@@ -956,9 +975,7 @@ async def _handle_call_tool(ctx, params: types.CallToolRequestParams) -> types.C
             premises = arguments["premises"]
             if isinstance(premises, dict):
                 # Un-wrap if client (like Claude) passed {"item": [...]}
-                arguments["premises"] = premises.get(
-                    "item", list(premises.values())
-                )
+                arguments["premises"] = premises.get("item", list(premises.values()))
             elif isinstance(premises, str):
                 arguments["premises"] = [premises]
 
@@ -969,10 +986,7 @@ async def _handle_call_tool(ctx, params: types.CallToolRequestParams) -> types.C
             conclusion = arguments.get("conclusion")
             if not conclusion:
                 return _err(
-{
-                                "error": "Missing required argument: 'conclusion' (or 'goal')"
-                            },
-                            indent=2,
+                    {"error": "Missing required argument: 'conclusion' (or 'goal')"}
                 )
 
             # Validate syntax first
@@ -980,10 +994,7 @@ async def _handle_call_tool(ctx, params: types.CallToolRequestParams) -> types.C
             validation = validate_formulas(all_formulas)
 
             if not validation["valid"]:
-                return _ok(
-{"result": "syntax_error", "validation": validation},
-                            indent=2,
-                )
+                return _ok({"result": "syntax_error", "validation": validation})
 
             # Smart Routing: Check if propositional (CORR-02)
             is_propositional = not any(_is_fol_formula(f) for f in all_formulas)
@@ -997,9 +1008,7 @@ async def _handle_call_tool(ctx, params: types.CallToolRequestParams) -> types.C
                     premises_joined = " & ".join(
                         [f"({p})" for p in arguments["premises"]]
                     )
-                    full_formula = (
-                        f"({premises_joined}) -> ({arguments['conclusion']})"
-                    )
+                    full_formula = f"({premises_joined}) -> ({arguments['conclusion']})"
 
                 try:
                     hcc_res = check_contingency(full_formula)
@@ -1193,12 +1202,11 @@ async def _handle_call_tool(ctx, params: types.CallToolRequestParams) -> types.C
                     background,
                 )
             if not res.best_explanation:
-                return _ok(
-{
-                                "error": res.message,
-                                "filtered_out": res.filtered_out_count,
-                            },
-                            indent=2,
+                return _err(
+                    {
+                        "error": res.message,
+                        "filtered_out": res.filtered_out_count,
+                    }
                 )
 
             result = {
@@ -1223,15 +1231,14 @@ async def _handle_call_tool(ctx, params: types.CallToolRequestParams) -> types.C
         elif name in {"prove_arithmetic", "check_satisfiable"}:
             if not z3_available():
                 return _err(
-{
-                                "error": "z3-solver is not installed",
-                                "hint": (
-                                    "Install it with: uv pip install "
-                                    "z3-solver — or use prove/find_model "
-                                    "for non-arithmetic questions."
-                                ),
-                            },
-                            indent=2,
+                    {
+                        "error": "z3-solver is not installed",
+                        "hint": (
+                            "Install it with: uv pip install "
+                            "z3-solver — or use prove/find_model "
+                            "for non-arithmetic questions."
+                        ),
+                    }
                 )
 
             shared = {
@@ -1259,10 +1266,7 @@ async def _handle_call_tool(ctx, params: types.CallToolRequestParams) -> types.C
             question = arguments.get("question", "")
             context = arguments.get("context", "")
             if not question:
-                return _err(
-{"error": "Missing required argument: 'question'"},
-                            indent=2,
-                )
+                return _err({"error": "Missing required argument: 'question'"})
 
             try:
                 result = await advisor.solve(question, context)
@@ -1299,7 +1303,7 @@ async def _handle_call_tool(ctx, params: types.CallToolRequestParams) -> types.C
 
     except (KeyError, ValueError, RuntimeError) as e:
         logger.error("Tool error: %s", e, exc_info=True)
-        return _ok({"error": str(e), "type": type(e).__name__})
+        return _err({"error": str(e), "type": type(e).__name__})
 
 
 async def main(
@@ -1341,7 +1345,7 @@ async def main(
         # SDK v2: handlers passed as constructor args; lifespan context carries
         # engine + advisor so _handle_call_tool can reach them without closures.
         @asynccontextmanager
-        async def _lifespan(_server):
+        async def _lifespan(_server: Server) -> Any:
             yield {"engine": engine, "advisor": advisor}
 
         server = Server(

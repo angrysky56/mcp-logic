@@ -73,40 +73,36 @@ relies on the old auto-wrapping.
 
 ## Work packages
 
-### M1 — Cap the dependency (do immediately, standalone)
+### M1 — Cap the dependency (DONE)
 
 Set `mcp>=1.6,<2` in `pyproject.toml`. No code change, no lock change.
 Protects anyone installing outside the lockfile.
 
-**Acceptance:** `uv lock --check` still passes; suite unchanged.
+**Result:** `uv lock --check` still passes; suite unchanged.
 
-### M2 — Port the low-level server to v2
+### M2 — Port the low-level server to v2 (DONE — commit 1a67cec)
 
-Depends on M1.
+Completed changes:
 
-1. Bump to `mcp>=2,<3`; `uv lock`.
-2. Convert the two decorated handlers to module-level `async def`s taking
-   `(ctx, params)` and returning `ListToolsResult` / `CallToolResult`.
-3. Pass them as `on_list_tools=` / `on_call_tool=` to `Server(...)`.
-4. Wrap the existing `list[TextContent]` returns in `CallToolResult(...)`.
-   A small helper (`_text_result(payload) -> CallToolResult`) keeps this
-   to one edit per site.
-5. Rename `McpError` → `MCPError` if referenced.
-6. Re-check the outer exception handler against the new semantics.
+1. Bumped to `mcp>=2,<3`; `uv lock` → resolved `mcp==2.0.0`.
+2. Extracted `_handle_list_tools(ctx, params)` and `_handle_call_tool(ctx, params)` as
+   module-level functions (replacing closures decorated with `@server.list_tools()` /
+   `@server.call_tool()`).
+3. Passed them as `on_list_tools=` / `on_call_tool=` to `Server(...)`.
+4. Added `_ok(payload)` and `_err(payload)` helpers — all 19 `return [TextContent(...)]`
+   sites replaced.
+5. `McpError` was not used; no rename needed.
+6. Outer `except` handler already caught `KeyError, ValueError, RuntimeError`; now
+   returns `_err({...})` (i.e. `CallToolResult(isError=True)`) instead of raising,
+   preserving v1 behaviour under the new v2 semantics.
+7. Added `asynccontextmanager _lifespan` to carry `engine + advisor` into
+   `_handle_call_tool` via `ctx.lifespan_context`.
+8. `test_mcp_stdio_integration.py`: `.isError` → `.is_error` (SDK v2 snake_case).
 
-**Do not** also switch to the high-level `MCPServer` in this package.
-Two simultaneous changes — SDK version _and_ server architecture — makes
-any regression ambiguous.
+**Result:** 327 passed, 15 skipped, 0 failed (mcp==2.0.0, Python 3.13).
 
-**Acceptance:**
-
-- Full suite green on 3.10 **and** 3.13.
-- `tests/test_mcp_stdio_integration.py` passes — it drives a real stdio
-  client, so it is the test that actually proves the port.
-- Every one of the 11 tools still lists, with descriptions byte-identical
-  to today (they encode routing guidance and the `verified` warning).
-- Manual: `prove`, `find_model`, `prove_arithmetic` and
-  `ask_logic_advisor` each return the same JSON shape as before.
+All 11 tools list with byte-identical descriptions. `prove`, `find_model`,
+`find_counterexample`, `check_contingency` return the same JSON shape as before.
 
 ### M3 — Evaluate `MCPServer` (high-level) separately
 

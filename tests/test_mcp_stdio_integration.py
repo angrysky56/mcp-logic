@@ -148,3 +148,84 @@ async def test_stdio_server_runs_prover9_and_mace4_through_mcp(
             assert impossible_payload["decided"] is True
             assert impossible_payload["fragment"] == "monadic"
             assert "No model exists" in impossible_payload["reason"]
+
+            # Error cases & parameter validation
+            missing_conclusion = await session.call_tool(
+                "prove",
+                {"premises": ["p"]},
+            )
+            assert missing_conclusion.is_error is True
+            missing_payload = _json_result(missing_conclusion)
+            assert "error" in missing_payload
+
+            syntax_err = await session.call_tool(
+                "prove",
+                {"premises": ["(p &"], "conclusion": "q"},
+            )
+            assert syntax_err.is_error is False
+            syntax_payload = _json_result(syntax_err)
+            assert syntax_payload["result"] == "syntax_error"
+
+            # check_well_formed
+            cwf = await session.call_tool(
+                "check_well_formed",
+                {"statements": ["p -> q", "all x (man(x))"]},
+            )
+            assert cwf.is_error is False
+            cwf_payload = _json_result(cwf)
+            assert cwf_payload["valid"] is True
+
+            # check_contingency
+            contingency = await session.call_tool(
+                "check_contingency",
+                {"formula": "p & q"},
+            )
+            assert contingency.is_error is False
+            contingency_payload = _json_result(contingency)
+            assert contingency_payload["is_contingent"] is True
+
+            # verify_commutativity
+            comm = await session.call_tool(
+                "verify_commutativity",
+                {
+                    "path_a": ["f", "g"],
+                    "path_b": ["h"],
+                    "object_start": "A",
+                    "object_end": "C",
+                    "with_category_axioms": True,
+                },
+            )
+            assert comm.is_error is False
+            comm_payload = _json_result(comm)
+            assert "conclusion" in comm_payload
+
+            # get_category_axioms
+            axioms = await session.call_tool(
+                "get_category_axioms",
+                {"concept": "group"},
+            )
+            assert axioms.is_error is False
+            axioms_payload = _json_result(axioms)
+            assert len(axioms_payload["axioms"]) > 0
+
+            # abductive_explain (propositional)
+            abd = await session.call_tool(
+                "abductive_explain",
+                {
+                    "observation": "wet_grass",
+                    "candidates": ["rained", "sprinkler"],
+                    "background": ["rained -> wet_grass", "sprinkler -> wet_grass"],
+                },
+            )
+            assert abd.is_error is False
+            abd_payload = _json_result(abd)
+            assert abd_payload["best_explanation"] in {"rained", "sprinkler"}
+
+            # unknown tool
+            unknown = await session.call_tool(
+                "non_existent_tool",
+                {},
+            )
+            assert unknown.is_error is True
+            unknown_payload = _json_result(unknown)
+            assert "error" in unknown_payload
