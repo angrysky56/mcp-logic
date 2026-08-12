@@ -188,6 +188,52 @@ def _smt_theory_features(expression: object) -> tuple[bool, bool]:
     return arithmetic, uninterpreted
 
 
+# Arithmetic written in Prover9 syntax: comparison/arithmetic operators, or a
+# bare numeral used as a term. Prover9 has no theory for any of it, so a
+# translation containing these needs re-translating into SMT-LIB.
+# Logical connectives are stripped BEFORE looking for arithmetic: `->` and
+# `<->` contain `>` and `<`, and `=` is ordinary FOL equality, not arithmetic.
+_FOL_CONNECTIVE_RE = re.compile(r"<->|<=>|->|!=|=|&|\|")
+# Symbols and numerals only. Word-shaped names like `lt`, `gt` or `div` are
+# deliberately NOT listed: `all x all y (lt(x,y) -> -lt(y,x))` is a strict
+# order relation in pure first-order logic, and treating it as arithmetic
+# would misroute the dense-order theory that this project keeps as its
+# standard "consistent but no finite model" control.
+_ARITHMETIC_IN_FOL_RE = re.compile(r"[<>+*/]|\b\d+\b")
+#: Stricter: an actual arithmetic operator, no bare numerals. Used when
+#: probing an unlabelled reply, where a stray digit (a JSON ``domain_size``,
+#: say) is not evidence of arithmetic.
+_ARITHMETIC_OPERATOR_RE = re.compile(r"[<>+*/]")
+
+
+def needs_smt_retranslation(
+    formulas: list[str], *, operators_only: bool = False
+) -> bool:
+    """Whether a Prover9 translation reaches for arithmetic it cannot express.
+
+    The model is asked for Prover9 first because a single narrow translation
+    task is what it does well — measured 9/9 solver-accepted, against 3/9
+    when the same call also had to choose a tool, and it degraded again when
+    one prompt taught two syntaxes. So instead of asking it to decide, look
+    at what it produced: comparisons, arithmetic operators or numerals mean
+    the question needs Z3, and it gets a second, equally narrow SMT-LIB
+    translation call.
+
+    Routing still never consults the question's wording — only the formulas.
+
+    Args:
+        formulas: Translated formula strings from the Prover9 pass.
+        operators_only: Require an arithmetic operator and ignore bare
+            numerals. Set when probing an unlabelled reply, where a stray
+            digit is not evidence of arithmetic.
+
+    Returns:
+        True if the formulas use arithmetic Prover9 has no theory for.
+    """
+    pattern = _ARITHMETIC_OPERATOR_RE if operators_only else _ARITHMETIC_IN_FOL_RE
+    return any(pattern.search(_FOL_CONNECTIVE_RE.sub(" ", f)) for f in formulas)
+
+
 def classify_formalization(formulas: list[str]) -> FormulaTheory:
     """Classify theory use by parsing formula text, never question wording."""
 
@@ -400,18 +446,14 @@ Rules:
 # also warns it has had "no instruction-following alignment work", so the
 # narrowest possible task wins.
 _FORMALIZE_LINES_SYSTEM = """\
-You are a logic translator. Translate the user's question into formulas. Use \
-Prover9 syntax for ordinary first-order logic, and SMT-LIB syntax whenever the \
-meaning depends on arithmetic.
+You are a first-order logic translator. Translate the user's question into \
+Prover9 formulas.
 
 ## Output format — one item per line, nothing else
 PREMISE: <formula>      (one line per premise; omit if there are none)
 GOAL: <formula>         (the conclusion, only for prove/find_counterexample)
 FORMULA: <formula>      (only for check_contingency)
 DOMAIN: <integer>       (optional, only for find_model)
-VAR: <name> <Int|Real|Bool>       (SMT-LIB only)
-PRED: <name> <arg sort>...         (SMT-LIB Bool-valued predicate)
-FUN: <name> <arg sort>... -> <result sort>  (SMT-LIB function)
 
 ## Prover9 syntax
 {syntax_rules}
@@ -438,13 +480,6 @@ Question: Find a world where every element has a successor and no element is its
 PREMISE: all x exists y (succ(x,y))
 PREMISE: all x (-succ(x,x))
 
-Question: Everyone over 18 can vote. Alice is 20. Can Alice vote?
-VAR: alice_age Int
-PRED: can_vote Int
-PREMISE: (forall ((age Int)) (=> (> age 18) (can_vote age)))
-PREMISE: (= alice_age 20)
-GOAL: (can_vote alice_age)
-
 ## Two rules that override everything else
 
 1. TRANSLATE, DO NOT ANSWER. You are never being asked to decide the
@@ -452,9 +487,6 @@ GOAL: (can_vote alice_age)
    emit the FORMULA: line and stop. Writing "TAUTOLOGY" is WRONG.
 2. NEVER write an English sentence after PREMISE:, GOAL: or FORMULA:.
    "All cats are animals" is WRONG; "all x (cat(x) -> animal(x))" is RIGHT.
-3. If arithmetic affects the answer, use SMT-LIB for every formula in the
-   translation. Declare free constants with VAR and predicates/functions with
-   PRED/FUN. Mixed arithmetic-and-predicate questions belong in SMT-LIB too.
 
 If the question is not a logic problem at all, output exactly:
 NONE
@@ -704,11 +736,58 @@ class LogicAdvisor:
             if label.upper() in {"PREMISE", "GOAL", "FORMULA", "STATEMENT"}
         ]
         theory = classify_formalization(translated_formulas)
+        smt_attempted = False
+
+        if theory not in {
+            FormulaTheory.ARITHMETIC,
+            FormulaTheory.MIXED,
+        } and needs_smt_retranslation(translated_formulas):
+            # The Prover9 pass reached for arithmetic it cannot express.
+            # Re-translate with the dedicated SMT-LIB prompt rather than
+            # sending `x > 0` to a prover with no theory of arithmetic.
+            steps.append(
+                "Translation used arithmetic Prover9 cannot express — "
+                "re-translating as SMT-LIB."
+            )
+            lines = await self._llm_call(
+                system=_SMT_FORMALIZE_SYSTEM,
+                user=user_msg,
+                max_tokens=_DEFAULT_MAX_TOKENS,
+            )
+            translated_formulas = [
+                value
+                for label, value in _LINE_RE.findall(_strip_think_blocks(lines))
+                if label.upper() in {"PREMISE", "GOAL", "FORMULA", "STATEMENT"}
+            ]
+            theory = classify_formalization(translated_formulas)
+
         if theory in {FormulaTheory.ARITHMETIC, FormulaTheory.MIXED}:
             steps.append(f"Parsed formula theory is {theory.value} — routing to Z3.")
             plan = parse_smt_formalization(lines)
+            smt_attempted = True
         else:
             plan = normalize_plan(parse_formalization(lines, question=question))
+
+        if plan.get("tool") == "none" and not smt_attempted:
+            # A first-order translation that produced nothing usable is not
+            # proof the question is unformalizable — on arithmetic questions
+            # this model often answers "NONE" or with a bare expression,
+            # because the Prover9 syntax it was handed genuinely cannot say
+            # "x > 0". Spend one more narrow call on the SMT-LIB prompt
+            # before concluding there is nothing here.
+            steps.append(
+                "First-order translation yielded nothing usable — retrying "
+                "as SMT-LIB before giving up."
+            )
+            lines = await self._llm_call(
+                system=_SMT_FORMALIZE_SYSTEM,
+                user=user_msg,
+                max_tokens=_DEFAULT_MAX_TOKENS,
+            )
+            smt_plan = parse_smt_formalization(lines)
+            if smt_plan.get("tool") not in (None, "none"):
+                plan = smt_plan
+                steps.append(f"SMT-LIB retry succeeded: {plan['tool']}.")
         steps.append(f"Formalization: {json.dumps(plan, indent=2)}")
 
         if plan.get("tool") == "none":
