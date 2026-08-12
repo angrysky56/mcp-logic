@@ -90,6 +90,7 @@ uv pip install --directory "%PROJECT_DIR%" "huggingface-hub>=0.24.0"
 REM ── Download model ──────────────────────────────────────────────────
 set "MODEL_DIR=%USERPROFILE%\.cache\mcp-logic\models"
 set "MODEL_FILE=%MODEL_DIR%\TwIL-LM3-Q8_0.gguf"
+set "MODEL_REVISION=5d90f3a3251e142fc5cc6b42a62b175fdb0d4ccd"
 
 if "%SKIP_DOWNLOAD%"=="true" (
     echo [WARNING] Skipping model download. Model will auto-download on first use.
@@ -105,7 +106,7 @@ echo [ADVISOR SETUP] Downloading TwIL-LM3-Q8_0.gguf (~3.3 GB)...
 echo   Destination: %MODEL_DIR%\
 if not exist "%MODEL_DIR%" mkdir "%MODEL_DIR%"
 
-uv run --directory "%PROJECT_DIR%" python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='webAI-Official/TwIL-LM3', filename='TwIL-LM3-Q8_0.gguf', local_dir=r'%MODEL_DIR%'); print('Download complete!')"
+uv run --directory "%PROJECT_DIR%" python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='webAI-Official/TwIL-LM3', filename='TwIL-LM3-Q8_0.gguf', revision='%MODEL_REVISION%', local_dir=r'%MODEL_DIR%'); print('Download complete!')"
 
 :done
 echo.

@@ -1,13 +1,13 @@
 # Plan: from "a prover we call" to a real logic computer
 
-Derived from Harrison, *Handbook of Practical Logic and Automated Reasoning*
+Derived from Harrison, _Handbook of Practical Logic and Automated Reasoning_
 (2009), chapters 3–5 and 7. Written for handoff to coding agents: each
 package is self-contained, states its dependencies, and ends in a
 checkable acceptance test.
 
 ## Why this sequence
 
-Today mcp-logic can *run* solvers. What it cannot do is **reason about its
+Today mcp-logic can _run_ solvers. What it cannot do is **reason about its
 own answers** — say which of them are decisions and which are guesses,
 route a problem to the engine that can actually decide it, or inspect the
 structure of a formula it was handed.
@@ -19,14 +19,14 @@ comes first.
 
 Verified by reading the source, not assumed:
 
-| Component | Reality |
-|---|---|
-| `formula_ast.py` (411 lines) | **Propositional only.** `Var`, `Not`, `And`, `Or`, `Implies`, `Iff`. Zero quantifier, predicate or term classes. Feeds `hcc_prover`. |
+| Component                         | Reality                                                                                                                              |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `formula_ast.py` (411 lines)      | **Propositional only.** `Var`, `Not`, `And`, `Or`, `Implies`, `Iff`. Zero quantifier, predicate or term classes. Feeds `hcc_prover`. |
 | `syntax_validator.py` (388 lines) | **String/regex heuristics.** `_check_quantifiers` and `_symbol_arities` approximate structure with patterns; there is no parse tree. |
-| `server.py` | Prover9 subprocess; now classifies `sos_empty` vs resource-limit exits. |
-| `mace4_wrapper.py` | Mace4 subprocess; bounded finite-model search. |
-| `smt_solver.py` | Z3 via SMT-LIB strings. Ground/quantifier-free in practice. |
-| `logic_advisor.py` | LLM formalization; routes arithmetic to Z3 by **regex on the question text**. |
+| `server.py`                       | Prover9 subprocess; now classifies `sos_empty` vs resource-limit exits.                                                              |
+| `mace4_wrapper.py`                | Mace4 subprocess; bounded finite-model search.                                                                                       |
+| `smt_solver.py`                   | Z3 via SMT-LIB strings. Ground/quantifier-free in practice.                                                                          |
+| `logic_advisor.py`                | LLM formalization; routes arithmetic to Z3 by **regex on the question text**.                                                        |
 
 **There is no first-order abstract syntax tree anywhere in the repo.**
 Fragment detection, theory-aware routing and free-variable analysis all
@@ -40,13 +40,13 @@ the class of bug that cost us the `xyz2` incident.
 
 **Depends on:** nothing. **Blocks:** 1, 2, 3, 4.
 
-### Goal
+### Package 0 Goal
 
 A real parse tree for the Prover9 subset the project already accepts, so
 that every later package asks structural questions of a tree instead of a
 regex.
 
-### Design
+### Package 0 Design
 
 New module `src/mcp_logic/fol_ast.py`. Do **not** extend
 `formula_ast.py` — it is propositional, is consumed by `hcc_prover`, and
@@ -54,7 +54,7 @@ its tests pin that behaviour. Add alongside; consider unifying later.
 
 Node types, mirroring Harrison §3.1:
 
-```
+```text
 Term    ::= Var(name) | Fn(name, args)          # Fn with args=[] is a constant
 Formula ::= Atom(pred, args) | Equal(l, r)
           | Not | And | Or | Implies | Iff
@@ -80,7 +80,7 @@ Required analyses (each ~10 lines given the tree):
 - Round-trip: `str(parse(s))` must re-parse to an equal tree.
 - Parse failure raises a `ParseError` carrying the offending position.
 
-### Acceptance
+### Package 0 Acceptance
 
 - `parse("all x (human(x) -> mortal(x))")` → `Forall("x", Implies(...))`.
 - `free_variables` on the historical hazard
@@ -95,12 +95,12 @@ Required analyses (each ~10 lines given the tree):
 
 **Depends on:** 0. Harrison §5.2, §5.3, §5.5.
 
-### Goal
+### Package 1 Goal
 
 Turn "we found no model up to size 6" into "**there is no model**", where
 that is mathematically licensed — and keep hedging where it is not.
 
-### Design
+### Package 1 Design
 
 New module `src/mcp_logic/fragments.py`.
 
@@ -108,7 +108,7 @@ Detect, on the Skolemized/prenex form:
 
 1. **Bernays–Schönfinkel–Ramsey (AE / `∃*∀*`)** — prefix is existentials
    then universals, **no function symbols of arity ≥ 1** (constants fine).
-   Has the finite model property with a *computable* bound:
+   Has the finite model property with a _computable_ bound:
    `domain = max(1, #existential vars + #constants)`. A Mace4 search to
    that bound is a **decision procedure**.
 2. **Monadic** — every predicate unary, no functions of arity ≥ 1.
@@ -134,7 +134,7 @@ decidable fragment, search to `model_bound` and report
 `decided: true` with `no_model_found` meaning **no model exists at all**.
 Outside a known fragment, keep the current honest hedge.
 
-### Acceptance
+### Package 1 Acceptance
 
 - BSR example (`exists x all y (p(x) -> p(y))`) → `decidable=True`.
 - A formula with a real function symbol (`all x (p(f(x)))`) → not BSR.
@@ -151,19 +151,19 @@ Outside a known fragment, keep the current honest hedge.
 
 **Depends on:** 0 (nominally); can proceed in parallel with 1.
 
-### Goal
+### Package 2 Goal
 
 One vocabulary for "how much do we know". Four have accreted
 independently and they do not compose:
 
-| Field | Set by | Means |
-|---|---|---|
-| `verified` | advisor | a solver returned *something* |
-| `definitive` | `prove` | search saturated |
-| `vacuity` | Mace4 | model is degenerate |
-| `unknown` | Z3 | gave up |
+| Field        | Set by  | Means                         |
+| ------------ | ------- | ----------------------------- |
+| `verified`   | advisor | a solver returned _something_ |
+| `definitive` | `prove` | search saturated              |
+| `vacuity`    | Mace4   | model is degenerate           |
+| `unknown`    | Z3      | gave up                       |
 
-### Design
+### Package 2 Design
 
 A single `status` enum on every solver result:
 
@@ -178,7 +178,7 @@ A single `status` enum on every solver result:
 SATURATED_NO_PROOF}` or a fragment-licensed `BOUNDED_NO_MODEL`), not
 independently assigned.
 
-### Acceptance
+### Package 2 Acceptance
 
 - No code path sets `verified` directly.
 - `RESOURCE_LIMIT` can never produce a natural-language answer asserting
@@ -191,14 +191,14 @@ independently assigned.
 
 **Depends on:** 0, 2. Harrison §5.13 (Nelson–Oppen).
 
-### Goal
+### Package 3 Goal
 
 Handle problems that mix arithmetic with uninterpreted predicates. Today
-`looks_arithmetic()` greps the *question text* and picks one engine;
+`looks_arithmetic()` greps the _question text_ and picks one engine;
 anything genuinely mixed — "everyone over 18 can vote; Alice is 20; can
 Alice vote?" — fails whichever way it is routed.
 
-### Design
+### Package 3 Design
 
 Route on the parsed **formula**, not the English:
 
@@ -211,7 +211,7 @@ Do **not** implement Nelson–Oppen. Z3 already implements it; the
 engineering job is presenting mixed problems to it correctly. Extend
 `smt_solver.build_declarations` to emit `declare-fun` for predicates.
 
-### Acceptance
+### Package 3 Acceptance
 
 - The voting example returns `proved` end-to-end via `ask_logic_advisor`.
 - Existing pure-FOL and pure-arithmetic routing is unchanged (regression).
@@ -223,13 +223,13 @@ engineering job is presenting mixed problems to it correctly. Extend
 
 **Depends on:** 0. Harrison §3.4–3.6.
 
-### Goal
+### Package 4 Goal
 
 Catch the `xyz2` class of hazard at validation time. A free variable in a
-Prover9 formula is *implicitly universally quantified* — sometimes
+Prover9 formula is _implicitly universally quantified_ — sometimes
 intended, frequently not, and invisible either way.
 
-### Design
+### Package 4 Design
 
 `check_well_formed` gains a warning (not an error — implicit
 generalization is legal and `categorical_helpers` relied on it):
@@ -239,7 +239,7 @@ generalization is legal and `categorical_helpers` relied on it):
 
 Also warn on **bound but unused** variables (the `ybc` case).
 
-### Acceptance
+### Package 4 Acceptance
 
 - The historical relational associativity axiom produces both warnings.
 - The current equational axioms produce none.

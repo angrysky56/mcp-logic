@@ -39,6 +39,9 @@ logger = logging.getLogger("mcp_logic.logic_advisor")
 
 # ── Constants ───────────────────────────────────────────────────────────
 _HF_REPO_ID = "webAI-Official/TwIL-LM3"
+# Immutable repository commit used for reproducible, supply-chain-safe model
+# downloads. Update deliberately after reviewing upstream model changes.
+_HF_REVISION = "5d90f3a3251e142fc5cc6b42a62b175fdb0d4ccd"
 _GGUF_FILENAME = "TwIL-LM3-Q8_0.gguf"
 _DEFAULT_CACHE_DIR = Path.home() / ".cache" / "mcp-logic" / "models"
 
@@ -1049,6 +1052,7 @@ class LogicAdvisor:
         path = hf_hub_download(
             repo_id=_HF_REPO_ID,
             filename=_GGUF_FILENAME,
+            revision=_HF_REVISION,
             local_dir=str(_DEFAULT_CACHE_DIR),
         )
         logger.info("Model downloaded to %s", path)
@@ -1095,7 +1099,9 @@ class LogicAdvisor:
         legitimately repeats tokens while working through a proof, and
         penalising that derails the ``<think>`` block.
         """
-        assert self._model is not None  # noqa: S101
+        model = self._model
+        if model is None:
+            raise RuntimeError("Logic advisor model is not loaded")
 
         # Reset generation state before every call.  llama.cpp reuses the KV
         # cache via longest-prefix matching, and every advisor prompt shares
@@ -1107,7 +1113,7 @@ class LogicAdvisor:
         # after the first.
         self._reset_model_state()
 
-        return self._model.create_chat_completion(
+        return model.create_chat_completion(
             messages=messages,
             max_tokens=max_tokens,
             temperature=temperature,

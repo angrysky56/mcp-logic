@@ -412,38 +412,29 @@ class ModalLogicVerifier:
                 await asyncio.sleep(60)
     ```
 
-         self,
-         operation_name: str,
-         coroutine: Awaitable[T]
+4.  Operation Timing:
 
+    ```python
+    async def track_operation(
+        self,
+        operation_name: str,
+        coroutine: Awaitable[T],
     ) -> T:
-    start_time = time.time()
-    try:
-    result = await coroutine
-    duration = time.time() - start_time
-    self.metrics[operation_name].append({
-    "duration": duration,
-    "success": True
-    })
-    return result
-    except Exception as e:
-    duration = time.time() - start_time
-    self.metrics[operation_name].append({
-    "duration": duration,
-    "success": False,
-    "error": str(e)
-    })
-    raise
-
-```
-[Concrete, detailed steps for implementation and maintenance]
-
-## Annotated Examples
-[Code snippets, diagrams, or flowcharts for clarity]
-
-## Contextual Notes
-[Historical decisions, trade-offs, and anticipated challenges]
-
-## Actionable Advice
-[Gotchas, edge cases, and common pitfalls to avoid]
-```
+        start_time = time.time()
+        try:
+            result = await coroutine
+            duration = time.time() - start_time
+            self.metrics[operation_name].append({
+                "duration": duration,
+                "success": True,
+            })
+            return result
+        except Exception as exc:
+            duration = time.time() - start_time
+            self.metrics[operation_name].append({
+                "duration": duration,
+                "success": False,
+                "error": str(exc),
+            })
+            raise
+    ```

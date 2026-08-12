@@ -26,7 +26,7 @@ FORCE_CPU=false
 SKIP_DOWNLOAD=false
 
 for arg in "$@"; do
-	case "$arg" in
+	case "${arg}" in
 	--cpu) FORCE_CPU=true ;;
 	--skip-download) SKIP_DOWNLOAD=true ;;
 	-h | --help)
@@ -34,6 +34,11 @@ for arg in "$@"; do
 		echo "  --cpu            Force CPU-only (no GPU acceleration)"
 		echo "  --skip-download  Install deps only, skip model download"
 		exit 0
+		;;
+	*)
+		err "Unknown option: ${arg}"
+		echo "Usage: $0 [--cpu] [--skip-download]"
+		exit 2
 		;;
 	esac
 done
@@ -48,11 +53,11 @@ ARCH="$(uname -m)"
 CMAKE_ARGS=""
 ACCEL_NAME="CPU (no acceleration)"
 
-if [ "$FORCE_CPU" = true ]; then
+if [[ ${FORCE_CPU} == true ]]; then
 	step "CPU-only mode forced via --cpu flag"
-elif [ "$OS" = "Darwin" ]; then
+elif [[ ${OS} == "Darwin" ]]; then
 	# macOS — use Metal on Apple Silicon
-	if [ "$ARCH" = "arm64" ]; then
+	if [[ ${ARCH} == "arm64" ]]; then
 		CMAKE_ARGS="-DGGML_METAL=on"
 		ACCEL_NAME="Metal (Apple Silicon)"
 		step "Detected macOS Apple Silicon → Metal acceleration"
@@ -61,7 +66,7 @@ elif [ "$OS" = "Darwin" ]; then
 		ACCEL_NAME="Metal (Intel Mac)"
 		step "Detected macOS Intel → Metal acceleration (limited)"
 	fi
-elif [ "$OS" = "Linux" ]; then
+elif [[ ${OS} == "Linux" ]]; then
 	if command -v nvidia-smi &>/dev/null; then
 		CMAKE_ARGS="-DGGML_CUDA=on"
 		ACCEL_NAME="CUDA (NVIDIA GPU)"
@@ -71,7 +76,7 @@ elif [ "$OS" = "Linux" ]; then
 		step "No NVIDIA GPU detected → CPU-only mode"
 	fi
 else
-	step "Unknown platform ($OS) → CPU-only mode"
+	step "Unknown platform (${OS}) → CPU-only mode"
 fi
 
 info "Acceleration: ${ACCEL_NAME}"
@@ -84,7 +89,7 @@ if ! command -v uv &>/dev/null; then
 fi
 
 # ── Step 3: Ensure venv exists ─────────────────────────────────────────
-if [ ! -d "${PROJECT_DIR}/.venv" ]; then
+if [[ ! -d "${PROJECT_DIR}/.venv" ]]; then
 	info "Creating virtual environment..."
 	uv venv --directory "${PROJECT_DIR}"
 fi
@@ -111,7 +116,7 @@ step "Target interpreter: ${VENV_PY}"
 info "Installing llama-cpp-python (this may take a few minutes to compile)..."
 step "CMAKE_ARGS=\"${CMAKE_ARGS:-<none>}\""
 
-if [ -n "$CMAKE_ARGS" ]; then
+if [[ -n ${CMAKE_ARGS} ]]; then
 	# --no-cache is REQUIRED, and is the whole ballgame. PyPI ships
 	# llama-cpp-python as an sdist only, so uv compiles it locally and caches
 	# the resulting wheel. That cache key does NOT include CMAKE_ARGS, so once
@@ -123,7 +128,7 @@ if [ -n "$CMAKE_ARGS" ]; then
 	# cache and can hang for many minutes on a large one.
 	# Rule of thumb: if this step finishes in seconds, it did NOT compile.
 	warn "Building llama-cpp-python from source — this takes 10-20 minutes."
-	CMAKE_ARGS="$CMAKE_ARGS" uv pip install \
+	CMAKE_ARGS="${CMAKE_ARGS}" uv pip install \
 		--no-cache \
 		--python "${VENV_PY}" \
 		--reinstall-package llama-cpp-python \
@@ -137,7 +142,7 @@ else
 fi
 
 # ── Step 4b: Verify the acceleration we claimed actually got compiled ──
-if [ -n "$CMAKE_ARGS" ]; then
+if [[ -n ${CMAKE_ARGS} ]]; then
 	if "${VENV_PY}" -c \
 		"from llama_cpp import llama_cpp as c; raise SystemExit(0 if c.llama_supports_gpu_offload() else 1)" \
 		2>/dev/null; then
@@ -156,10 +161,11 @@ uv pip install --python "${VENV_PY}" "huggingface-hub>=0.24.0"
 # ── Step 6: Download model (optional) ─────────────────────────────────
 MODEL_DIR="${HOME}/.cache/mcp-logic/models"
 MODEL_FILE="${MODEL_DIR}/TwIL-LM3-Q8_0.gguf"
+MODEL_REVISION="5d90f3a3251e142fc5cc6b42a62b175fdb0d4ccd"
 
-if [ "$SKIP_DOWNLOAD" = true ]; then
+if [[ ${SKIP_DOWNLOAD} == true ]]; then
 	warn "Skipping model download (--skip-download). Model will auto-download on first use."
-elif [ -f "$MODEL_FILE" ]; then
+elif [[ -f ${MODEL_FILE} ]]; then
 	info "Model already downloaded: ${MODEL_FILE}"
 else
 	info "Downloading TwIL-LM3-Q8_0.gguf (~3.3 GB)..."
@@ -170,6 +176,7 @@ from huggingface_hub import hf_hub_download
 hf_hub_download(
     repo_id='webAI-Official/TwIL-LM3',
     filename='TwIL-LM3-Q8_0.gguf',
+    revision='${MODEL_REVISION}',
     local_dir='${MODEL_DIR}',
 )
 print('Download complete!')
@@ -181,7 +188,7 @@ echo ""
 info "✅ Logic advisor setup complete!"
 echo ""
 echo "  Acceleration:  ${ACCEL_NAME}"
-if [ -f "$MODEL_FILE" ]; then
+if [[ -f ${MODEL_FILE} ]]; then
 	echo "  Model:         ${MODEL_FILE}"
 else
 	echo "  Model:         Will auto-download on first use"

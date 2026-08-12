@@ -20,7 +20,7 @@ This document explores the logical chain of relationships between understanding,
 
 1. Understanding → Explanation
 
-   ```
+   ```text
    all x all y (understands(x,y) -> can_explain(x,y))
    ```
 
@@ -29,7 +29,7 @@ This document explores the logical chain of relationships between understanding,
 
 2. Explanation → Knowledge
 
-   ```
+   ```text
    all x all y (can_explain(x,y) -> knows(x,y))
    ```
 
@@ -38,7 +38,7 @@ This document explores the logical chain of relationships between understanding,
 
 3. Knowledge → Belief
 
-   ```
+   ```text
    all x all y (knows(x,y) -> believes(x,y))
    ```
 
@@ -47,7 +47,7 @@ This document explores the logical chain of relationships between understanding,
 
 4. Belief → Reasoning Capability
 
-   ```
+   ```text
    all x all y (believes(x,y) -> can_reason_about(x,y))
    ```
 
@@ -56,7 +56,7 @@ This document explores the logical chain of relationships between understanding,
 
 5. Reasoning + Context → Application
 
-   ```
+   ```text
    all x all y (can_reason_about(x,y) & knows_context(x,y) -> can_apply(x,y))
    ```
 

@@ -14,9 +14,9 @@ focus: arch
 
 ## Architectural Pattern
 
-**Façade + Subprocess Delegation**
+### Façade + Subprocess Delegation
 
-```
+```text
 [MCP Client (Claude)]
          │  stdio JSON-RPC
          ▼
@@ -128,7 +128,7 @@ else:
 
 ## Data Flow: Proof Request
 
-```
+```text
 Client → prove(premises, conclusion)
   → validate_formulas(premises + [conclusion])      # syntax check
   → if propositional: check_contingency(full_formula) → ContingencyResult
@@ -140,7 +140,7 @@ Client → prove(premises, conclusion)
 
 ## Data Flow: Counterexample Request
 
-```
+```text
 Client → find_counterexample(premises, conclusion, domain_size)
   → Mace4Wrapper._create_input_file(premises, goal=conclusion, domain_size)
       → formulas(goals) block (Mace4 auto-negates internally)

@@ -1,43 +1,31 @@
-# Dockerfile for mcp-logic with Prover9
+# Dockerfile for the MCP Logic stdio server.
 FROM python:3.12-slim
 
-# Install basic dependencies
-RUN apt-get update && apt-get install -y \
-    git \
-    curl \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+ARG UV_VERSION=0.11.21
 
-# Set working directory
+# Pin the build frontend and avoid retaining package caches in the image.
+RUN pip install --no-cache-dir "uv==${UV_VERSION}"
+
+# The server and its solver subprocesses do not require root privileges.
+RUN groupadd --gid 10001 mcp-logic \
+    && useradd --create-home --uid 10001 --gid mcp-logic mcp-logic
+
 WORKDIR /app
+COPY --chown=mcp-logic:mcp-logic . .
 
-# Copy application
-COPY . .
+RUN uv sync --locked --no-dev \
+    && mkdir -p /usr/local/prover9-mount \
+    && chown mcp-logic:mcp-logic /usr/local/prover9-mount
 
-# Create Python virtual environment in the correct location
-RUN pip install uv
-RUN uv venv .venv
-ENV PATH="/app/.venv/bin:$PATH"
+ENV PATH="/app/.venv/bin:${PATH}"
 
-# Install Python dependencies with specific versions
-RUN pip install --upgrade pip
-RUN pip install -e .
-RUN pip install requests==2.31.0
-RUN pip install docker>=7.0.0
+USER mcp-logic
 
-# Install other requirements if they exist
-RUN if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+# A stdio server has no network health endpoint. Validate the Python package
+# and the two externally mounted solver executables instead.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD python -c "import mcp_logic" \
+    && test -x /usr/local/prover9-mount/prover9 \
+    && test -x /usr/local/prover9-mount/mace4 || exit 1
 
-# Create a directory to mount the local Prover9 binaries
-RUN mkdir -p /usr/local/prover9-mount
-
-# Create a wrapper script for Windows compatibility
-RUN echo '#!/bin/bash' > /usr/local/prover9-mount/prover9.exe && \
-    echo '/usr/local/prover9-mount/prover9 "$@"' >> /usr/local/prover9-mount/prover9.exe && \
-    chmod +x /usr/local/prover9-mount/prover9.exe
-
-# Set environment variables
-ENV DOCKER_HOST=unix:///var/run/docker.sock
-
-# Command to run the server
-CMD ["sh", "-c", "uv --directory /app run python -m mcp_logic --prover-path /usr/local/prover9-mount"]
+CMD ["mcp_logic", "--prover-path", "/usr/local/prover9-mount"]

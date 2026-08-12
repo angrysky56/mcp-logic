@@ -1,0 +1,16 @@
+.git
+.github
+.handoff_docs
+.planning
+.pytest_cache
+.ruff_cache
+.trunk
+.venv
+Documents
+docker-env
+ladr
+tests
+*.egg-info
+*.md
+__pycache__
+*.py[cod]

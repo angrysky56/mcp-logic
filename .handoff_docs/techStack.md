@@ -27,7 +27,7 @@ The mcp-logic server provides a critical bridge between modern AI systems and fo
 
 1. Format logical statements using Prover9 syntax:
 
-   ```
+   ```text
    all x (P(x) -> Q(x))  # Universal quantification
    exists x P(x)         # Existential quantification
    P & Q                 # Conjunction
@@ -38,7 +38,7 @@ The mcp-logic server provides a critical bridge between modern AI systems and fo
 
 2. Modal Logic Operators:
 
-   ```
+   ```text
    box(P)    # Necessity operator
    dia(P)    # Possibility operator
    ```
@@ -61,7 +61,7 @@ The mcp-logic server provides a critical bridge between modern AI systems and fo
 
 ### Basic First-Order Logic Proof
 
-```
+```python
 # Proving modus ponens
 premises = [
     "P -> Q",    # If P then Q
@@ -72,7 +72,7 @@ conclusion = "Q" # Therefore Q is true
 
 ### Modal Logic Example
 
-```
+```python
 # Proving necessity distributes over implication
 premises = [
     "box(P -> Q)"  # It is necessary that (if P then Q)
@@ -82,7 +82,7 @@ conclusion = "box(P) -> box(Q)"  # Therefore (necessarily P implies necessarily 
 
 ### Multi-Agent Knowledge
 
-```
+```python
 # Agent A knows what Agent B knows
 premises = [
     "knows(a, knows(b, P))",     # A knows that B knows P
@@ -91,9 +91,9 @@ premises = [
 conclusion = "P"                  # Therefore P is true
 ```
 
-### Using Mace4 for Counterexamples
+### Mace4 Counterexample Example
 
-```
+```python
 # Finding a model where transitive closure fails
 clauses = [
     "R(a,b)",           # a is related to b

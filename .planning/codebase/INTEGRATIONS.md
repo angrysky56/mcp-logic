@@ -13,7 +13,7 @@ focus: tech
 - **How**: `subprocess.run([str(self.prover_exe), "-f", str(input_path)])`, stdout parsed for `"THEOREM PROVED"` / `"SEARCH FAILED"` / `"Fatal error"`
 - **Input format**: Prover9 `.in` file format (TPTP-like):
 
-  ```
+  ```text
   formulas(assumptions).
     all x (man(x) -> mortal(x)).
     man(socrates).
@@ -34,7 +34,7 @@ focus: tech
 - **What**: Finite model finder / counterexample searcher from the LADR library
 - **How**: `subprocess.run([str(self.mace4_exe), "-f", str(input_path)])`, stdout parsed for `"DOMAIN SIZE"` + `"interpretation("` (model found) vs `"SEARCH FAILED"/"SEARCH TERMINATED"`
 - **Input format**: Same Mace4 format with `assign()` directives + `formulas(assumptions).` + optional `formulas(goals).` (Mace4 auto-negates the goal internally)
-  ```
+  ```text
   assign(domain_size, 2).
   assign(end_size, 10).
   assign(max_seconds, 60).

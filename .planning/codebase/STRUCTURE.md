@@ -7,7 +7,7 @@ focus: arch
 
 ## Root Directory Layout
 
-```
+```text
 mcp-logic/
 ├── src/
 │   └── mcp_logic/           # ← Main Python package (src-layout)
@@ -86,7 +86,7 @@ The package uses **src-layout** (PEP 517), which prevents accidental imports fro
 
 ### Module Dependency Graph
 
-```
+```text
 server.py
 ├── mace4_wrapper.py          (Mace4Wrapper)
 ├── hcc_prover.py             (check_contingency)

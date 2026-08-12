@@ -11,14 +11,18 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
+from types import ModuleType
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
+import mcp_logic.logic_advisor as logic_advisor_module
 from mcp_logic.logic_advisor import (
     _DEFAULT_MAX_TOKENS,
     _DEFAULT_N_CTX,
+    _HF_REVISION,
     AdvisorDisabledError,
     AdvisorResult,
     LogicAdvisor,
@@ -1078,11 +1082,45 @@ class TestDecodingSettings:
         # llama.cpp defaults this to 1.1; the card calls 1.0 load-bearing.
         assert captured["repeat_penalty"] == 1.0
 
+    def test_completion_requires_a_loaded_model(self, fake_solver: FakeSolver) -> None:
+        advisor = _make_advisor(fake_solver)
+        advisor._model = None
+
+        with pytest.raises(RuntimeError, match="not loaded"):
+            advisor._create_chat_completion([], 2048, 0.0)
+
     def test_generation_budget_meets_model_card_minimum(self) -> None:
         # The card: a short budget truncates the <think> block and "costs far
         # more accuracy than the quantization does".
         assert _DEFAULT_MAX_TOKENS >= 2048
         assert _DEFAULT_N_CTX >= 8192
+
+
+class TestModelResolution:
+    """Advisor downloads must be reproducible and supply-chain safe."""
+
+    def test_download_uses_pinned_revision(
+        self,
+        fake_solver: FakeSolver,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Any,
+    ) -> None:
+        captured: dict[str, Any] = {}
+        fake_hub = ModuleType("huggingface_hub")
+
+        def fake_download(**kwargs: Any) -> str:
+            captured.update(kwargs)
+            return str(tmp_path / "downloaded.gguf")
+
+        fake_hub.hf_hub_download = fake_download  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "huggingface_hub", fake_hub)
+        monkeypatch.setattr(logic_advisor_module, "_DEFAULT_CACHE_DIR", tmp_path)
+        advisor = LogicAdvisor(solver=fake_solver)
+
+        advisor._resolve_model_path()
+
+        assert captured["revision"] == _HF_REVISION
+        assert len(_HF_REVISION) == 40
 
 
 class TestToolInference:

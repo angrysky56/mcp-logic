@@ -60,7 +60,7 @@
 
 ## File Changes
 
-```
+```text
 /home/ty/Repositories/mcp-logic/
 ├── src/mcp_logic/
 │   ├── server.py              [FIXED] - Bare except → specific exceptions
@@ -99,7 +99,7 @@
 
 All return properly formatted JSON output with structured data.
 
-## Ready for Use!
+## Ready for Use
 
 The project is now:
 

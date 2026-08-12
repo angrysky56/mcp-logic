@@ -138,4 +138,4 @@
 | CLEAN-03 | Remove Dockerfile EXPOSE               | 5     | ✅     |
 | CLEAN-04 | Restructure agent docs                 | 5     | ✅     |
 
-**Coverage: 13/13 requirements mapped ✓**
+Coverage: 13/13 requirements mapped ✓

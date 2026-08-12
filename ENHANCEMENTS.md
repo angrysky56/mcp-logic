@@ -57,7 +57,7 @@ Add to Claude Desktop MCP config (auto-generated at `claude-app-config.json`):
 
 **Prove a theorem:**
 
-```
+```text
 use mcp-logic prove tool with:
 premises: ["all x (man(x) -> mortal(x))", "man(socrates)"]
 conclusion: "mortal(socrates)"
@@ -65,7 +65,7 @@ conclusion: "mortal(socrates)"
 
 **Find counterexample:**
 
-```
+```text
 use mcp-logic find-counterexample tool with:
 premises: ["P(a)"]
 conclusion: "P(b)"
@@ -74,7 +74,7 @@ conclusion: "P(b)"
 
 **Verify categorical diagram:**
 
-```
+```text
 use mcp-logic verify-commutativity tool with:
 path_a: ["f", "g"]
 path_b: ["h"]
@@ -111,7 +111,7 @@ object_start: "A", object_end: "C"
 
 ## Files Changed
 
-```
+```text
 src/mcp_logic/
 ├── server.py              [MODIFIED] - Added 4 new tools, validation
 ├── mace4_wrapper.py       [NEW] - Mace4 model finder

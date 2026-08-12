@@ -8,8 +8,7 @@
         "run",
         "mcp_logic",
         "--prover-path",
-        "/your-path-to/mcp-logic/ladr/bin",
-        "--no-advisor"
+        "/your-path-to/mcp-logic/ladr/bin"
       ]
     }
   }

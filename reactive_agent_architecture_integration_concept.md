@@ -1,4 +1,4 @@
-Rough Integration Plan for Reactive Agent Architecture
+# Rough Integration Plan for Reactive Agent Architecture
 
 /home/ty/Repositories/ai_workspace/reflective-agent-architecture
 
@@ -18,23 +18,23 @@ diagrammatic reasoning that you can actually run and verify.
 """
 import pyzx as zx
 
-# Generate quantum circuit (morphism in dagger compact category)
+\# Generate quantum circuit (morphism in dagger compact category)
 
 circuit = zx.generate.cliffordT(5, 50)
 print(f"Original: {circuit.stats()}")
 
-# Apply categorical rewrite rules (diagram chasing)
+\# Apply categorical rewrite rules (diagram chasing)
 
 zx.simplify.full_reduce(circuit)
 print(f"Simplified: {circuit.stats()}")
 
-# This demonstrates:
+\# This demonstrates:
 
-# 1. Visual diagrams as rigorous math objects
+\# 1. Visual diagrams as rigorous math objects
 
-# 2. Sound rewrite rules (provably correct transformations)
+\# 2. Sound rewrite rules (provably correct transformations)
 
-# 3. Automated verification (the simplification preserves equivalence)
+\# 3. Automated verification (the simplification preserves equivalence)
 
 Why this matters: PyZX proves the entire pipeline works. It's not theoretical - it's a production system for quantum computing that does exactly what your documents propose: formal categorical reasoning on visual diagrams with automated verification.
 Phase 2: Neo4j Bridge (Week 2 - Practical Integration)
@@ -173,7 +173,7 @@ Why This Matters to Your Work
    python# Example: Verify emotional state transition logic
    kg = CategoricalKnowledgeGraph(neo4j_uri, user, pwd)
 
-# Extract reasoning pattern
+\# Extract reasoning pattern
 
 arousal_path = kg.extract_reasoning_pattern("""
 MATCH (s1:EmotionalState {name: 'calm'})-[t1:TRANSITIONS_TO]->
@@ -182,7 +182,7 @@ MATCH (s1:EmotionalState {name: 'calm'})-[t1:TRANSITIONS_TO]->
 RETURN s1, t1, s2, t2, s3
 """)
 
-# Verify property: "Arousal always increases monotonically"
+\# Verify property: "Arousal always increases monotonically"
 
 verifier = CategoryTheoryToFOL()
 fol = verifier.diagram_to_fol(arousal_path, "monotonic_increase")
@@ -210,16 +210,16 @@ Choose ONE:
 Option A (Fastest validation):
 bash# Install PyZX, run the 5-line proof-of-concept
 
-# See categorical diagrammatic reasoning work in 10 minutes
+\# See categorical diagrammatic reasoning work in 10 minutes
 
 Option B (Most relevant to existing work):
 bash# Create the Neo4j bridge
 
-# Pick ONE reasoning pattern from your cognitive architecture
+\# Pick ONE reasoning pattern from your cognitive architecture
 
-# Formalize it categorically and verify a property
+\# Formalize it categorically and verify a property
 
 Option C (Most ambitious):
 bash# Full pipeline: Neo4j → PyZX → Prover9
 
-# Verify an emotional state transition chain is formally consistent
+\# Verify an emotional state transition chain is formally consistent

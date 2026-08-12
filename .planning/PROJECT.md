@@ -40,25 +40,25 @@ All 13 issues resolved, verified by a passing test suite and a green CI run.
 
 ### Active (issues to fix — this milestone)
 
-**Runtime Quality**
+#### Runtime Quality
 
 - [ ] **RQ-01**: Replace blocking `subprocess.run()` in async tool handlers with `asyncio.create_subprocess_exec()` or thread executor to avoid blocking the event loop
 - [ ] **RQ-02**: Make log level configurable via `--log-level` CLI arg (default `INFO`, not hardcoded `DEBUG`)
 
-**Testing**
+#### Testing
 
 - [ ] **TEST-01**: Fix `test_proofs.py` hardcoded Windows binary path — use a pytest fixture or `skipif` for the correct Linux `ladr/bin/` path
 - [ ] **TEST-02**: Add real `assert` statements to `test_enhancements.py` to replace print-only checks
 - [ ] **TEST-03**: Add a GitHub Actions CI workflow that installs LADR, runs `pytest`, and runs `trunk check`
 
-**Correctness**
+#### Correctness
 
 - [ ] **CORR-01**: Fix Mace4 `_parse_model()` duplicate data bug — properly parse `function()`/`relation()` entries into structured `predicates`/`functions` dicts instead of duplicating into `raw_interpretation`
 - [ ] **CORR-02**: Fix smart-routing heuristic in `server.py` — use the formula AST parser or syntax validator to detect quantifiers structurally instead of fragile string matching
 - [ ] **CORR-03**: Fix `group_axioms()` inconsistency — align identity element `e` treatment with `monoid_axioms()` pattern
 - [ ] **CORR-04**: Improve `syntax_validator.py` quantifier scope detection — handle multi-variable quantifiers and detect missing scope issues
 
-**Cleanup**
+#### Cleanup
 
 - [ ] **CLEAN-01**: Make Mace4 timeout configurable — accept `timeout` param in `find_model()` / `find_counterexample()`
 - [ ] **CLEAN-02**: Remove or document `docker-env/` venv; add to `.gitignore` if unused
@@ -104,4 +104,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 
-_Last updated: 2026-05-01 after initialization_
+Last updated: 2026-05-01 after initialization.

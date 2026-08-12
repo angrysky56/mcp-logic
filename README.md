@@ -67,38 +67,37 @@ The script automatically:
 
 > **No venv activation needed** — the setup scripts use `uv` which manages the virtual environment automatically. All `uv run` and `uv pip install --directory` commands target the project's `.venv` without you having to activate it first.
 
-<details>
-<summary><strong>Manual installation (advanced)</strong></summary>
+### Manual Installation (Advanced)
 
 If you prefer to install manually instead of using the setup script:
 
 **Linux (NVIDIA GPU):**
 
 ```bash
-CMAKE_ARGS="-DGGML_CUDA=on" uv pip install --directory . llama-cpp-python>=0.3.0
-uv pip install --directory . huggingface-hub>=0.24.0
+CMAKE_ARGS="-DGGML_CUDA=on" uv pip install --directory . "llama-cpp-python>=0.3.0"
+uv pip install --directory . "huggingface-hub>=0.24.0"
 ```
 
 **macOS (Apple Silicon):**
 
 ```bash
-CMAKE_ARGS="-DGGML_METAL=on" uv pip install --directory . llama-cpp-python>=0.3.0
-uv pip install --directory . huggingface-hub>=0.24.0
+CMAKE_ARGS="-DGGML_METAL=on" uv pip install --directory . "llama-cpp-python>=0.3.0"
+uv pip install --directory . "huggingface-hub>=0.24.0"
 ```
 
 **Windows (NVIDIA GPU, PowerShell):**
 
 ```powershell
 $env:CMAKE_ARGS="-DGGML_CUDA=on"
-uv pip install --directory . llama-cpp-python>=0.3.0
-uv pip install --directory . huggingface-hub>=0.24.0
+uv pip install --directory . "llama-cpp-python>=0.3.0"
+uv pip install --directory . "huggingface-hub>=0.24.0"
 ```
 
 **CPU-only (any platform):**
 
 ```bash
-uv pip install --directory . llama-cpp-python>=0.3.0
-uv pip install --directory . huggingface-hub>=0.24.0
+uv pip install --directory . "llama-cpp-python>=0.3.0"
+uv pip install --directory . "huggingface-hub>=0.24.0"
 ```
 
 The model auto-downloads on first use, or pre-download manually:
@@ -107,12 +106,11 @@ The model auto-downloads on first use, or pre-download manually:
 uv run --directory . python -c "
 from huggingface_hub import hf_hub_download
 hf_hub_download('webAI-Official/TwIL-LM3', 'TwIL-LM3-Q8_0.gguf',
+                revision='5d90f3a3251e142fc5cc6b42a62b175fdb0d4ccd',
                 local_dir='$HOME/.cache/mcp-logic/models',
                 local_dir_use_symlinks=False)
 "
 ```
-
-</details>
 
 ### Platform Compatibility
 
@@ -139,8 +137,7 @@ Add to your Claude Desktop MCP config (auto-generated at `claude-app-config.json
         "run",
         "mcp_logic",
         "--prover-path",
-        "/absolute/path/to/mcp-logic/ladr/bin",
-        "--no-advisor"
+        "/absolute/path/to/mcp-logic/ladr/bin"
       ]
     }
   }
@@ -149,8 +146,9 @@ Add to your Claude Desktop MCP config (auto-generated at `claude-app-config.json
 
 **Important:** Replace `/absolute/path/to/mcp-logic` with your actual repository path.
 
-Remove `"--no-advisor"` only when you have installed the optional advisor model
-dependencies and intend to use `ask_logic_advisor`.
+Add `"--no-advisor"` for deterministic solver-only testing or when the
+optional advisor dependencies are not installed. The model is lazy-loaded, so
+normal `prove` and `find_model` calls do not consume GPU memory.
 
 ### Codex Integration
 
@@ -159,8 +157,7 @@ Register the stdio server globally with absolute paths:
 ```bash
 codex mcp add mcp-logic -- \
   /absolute/path/to/mcp-logic/.venv/bin/mcp_logic \
-  --prover-path /absolute/path/to/mcp-logic/ladr/bin \
-  --no-advisor
+  --prover-path /absolute/path/to/mcp-logic/ladr/bin
 ```
 
 Confirm the saved command with `codex mcp get mcp-logic`. Restart Codex after
@@ -186,7 +183,7 @@ adding or changing the server so its tools are loaded into the next session.
 
 Just ask a question in natural language — the advisor formalizes it, runs the solver, and explains the result:
 
-```
+```text
 Use ask_logic_advisor with:
 question: "Is it true that if all humans are mortal and Socrates is human,
            then Socrates is mortal?"
@@ -200,7 +197,7 @@ The response also includes the formalization it used and the raw solver output f
 
 ### Prove a Theorem (Direct)
 
-```
+```text
 Use the prove tool with:
 premises: ["all x (man(x) -> mortal(x))", "man(socrates)"]
 conclusion: "mortal(socrates)"
@@ -210,7 +207,7 @@ conclusion: "mortal(socrates)"
 
 ### Analyze Propositional Contingency
 
-```
+```text
 Use the check_contingency tool with:
 formula: "(p -> q) | (q -> p)"
 ```
@@ -219,7 +216,7 @@ formula: "(p -> q) | (q -> p)"
 
 ### Find a Counterexample
 
-```
+```text
 Use the find_counterexample tool with:
 premises: ["P(a)"]
 conclusion: "P(b)"
@@ -229,7 +226,7 @@ conclusion: "P(b)"
 
 ### Verify Categorical Diagram
 
-```
+```text
 Use the verify_commutativity tool with:
 path_a: ["f", "g"]
 path_b: ["h"]
@@ -257,7 +254,7 @@ run_mcp_logic.bat
 
 ## Project Structure
 
-```
+```text
 mcp-logic/
 ├── src/mcp_logic/
 │   ├── server.py              # Main MCP server (9 tools)
@@ -286,7 +283,7 @@ mcp-logic/
 
 The `ask_logic_advisor` tool uses a 3-phase agentic pipeline:
 
-```
+```text
   Natural Language Question
          │
          ▼
