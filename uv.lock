@@ -778,15 +778,13 @@ dependencies = [
     { name = "mcp" },
     { name = "pydantic" },
     { name = "pytest-asyncio" },
+    { name = "z3-solver" },
 ]
 
 [package.optional-dependencies]
 advisor = [
     { name = "huggingface-hub" },
     { name = "llama-cpp-python" },
-]
-smt = [
-    { name = "z3-solver" },
 ]
 
 [package.dev-dependencies]
@@ -801,9 +799,9 @@ requires-dist = [
     { name = "mcp", specifier = ">=2,<3" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pytest-asyncio" },
-    { name = "z3-solver", marker = "extra == 'smt'", specifier = ">=4.13" },
+    { name = "z3-solver", specifier = ">=4.13" },
 ]
-provides-extras = ["advisor", "smt"]
+provides-extras = ["advisor"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest-cov", specifier = ">=7.1.0" }]

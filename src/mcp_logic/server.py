@@ -6,6 +6,7 @@ Provides tools for automated theorem proving and model finding using Prover9 and
 
 import argparse
 import asyncio
+import importlib.util
 import json
 import logging
 import os
@@ -1350,8 +1351,27 @@ async def main(
     )
     if no_advisor:
         logger.info("Logic advisor is DISABLED (--no-advisor flag)")
+    elif importlib.util.find_spec("llama_cpp") is None:
+        # Say so now rather than at the first query. The advisor is an
+        # optional extra and a bare `uv sync` prunes it, which used to
+        # surface only as a confusing runtime failure much later.
+        logger.warning(
+            "Logic advisor is ENABLED but llama-cpp-python is NOT installed — "
+            "ask_logic_advisor will fail. Install it with ./setup-advisor.sh "
+            "(builds with GPU support and fetches the model), or pass "
+            "--no-advisor to silence this."
+        )
     else:
         logger.info("Logic advisor enabled (model will lazy-load on first query)")
+
+    if not z3_available():
+        # z3 is a required dependency; missing means a broken install.
+        logger.error(
+            "z3-solver is NOT installed. prove_arithmetic and "
+            "check_satisfiable are unavailable, and arithmetic questions "
+            "cannot be answered — Prover9 has no theory of arithmetic. "
+            "Reinstall with `uv sync`."
+        )
 
     async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
         logger.info("Server running with stdio transport")

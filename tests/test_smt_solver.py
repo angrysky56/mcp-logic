@@ -14,7 +14,20 @@ from mcp_logic.smt_solver import (
     z3_available,
 )
 
-pytestmark = pytest.mark.skipif(not z3_available(), reason="z3-solver is not installed")
+
+def test_z3_is_installed() -> None:
+    """z3-solver is a required dependency, so absence is a failure.
+
+    This used to be a module-level ``skipif``. When a bare ``uv sync``
+    pruned the optional extras, 15 tests turned from passing to skipped and
+    the suite still reported success — while prove_arithmetic and
+    check_satisfiable were dead. A missing required dependency is a broken
+    install, and the suite should say so.
+    """
+    assert z3_available(), (
+        "z3-solver is missing. It is a required dependency — reinstall with "
+        "`uv sync` (add --extra advisor if you also want the onboard LLM)."
+    )
 
 
 class TestDeclarations:

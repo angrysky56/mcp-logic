@@ -7,12 +7,33 @@ requires-python = ">=3.10"
 # constructor on_* params (on_list_tools, on_call_tool) instead of
 # @server.list_tools()/@server.call_tool() decorators. See
 # .planning/phases/mcp-v2-migration-plan.md
-dependencies = ["mcp>=2,<3", "pydantic>=2.0.0", "pytest-asyncio"]
+#
+# z3-solver is REQUIRED, not an extra. Prover9 has no theory of arithmetic,
+# so without Z3 the server silently loses prove_arithmetic and
+# check_satisfiable and answers every numeric question with "not installed".
+# It is a plain wheel (~30 MB, no compiler, no GPU), so there is no install
+# cost worth trading that away for.
+dependencies = [
+  "mcp>=2,<3",
+  "pydantic>=2.0.0",
+  "pytest-asyncio",
+  "z3-solver>=4.13",
+]
 
 [project.optional-dependencies]
+# The advisor stays OPTIONAL, deliberately. PyPI ships llama-cpp-python as
+# an sdist only, so installing it is a 10-20 minute C++/CUDA compile, and
+# first use downloads a 3.3 GB model. As a default dependency that would put
+# a 20-minute build in front of every `pip install` and every CI run.
+#
+# Install it with either:
+#     ./setup-advisor.sh       # detects CUDA/Metal, builds, fetches the model
+#     uv sync --extra advisor  # build only
+#
+# The server runs fine without it — only ask_logic_advisor is unavailable,
+# and it now says so loudly at startup instead of failing on first use.
+# Turn it off at runtime with --no-advisor.
 advisor = ["llama-cpp-python>=0.3.0", "huggingface-hub>=0.24.0"]
-# Z3 gives arithmetic reasoning, which Prover9 has no theory for.
-smt = ["z3-solver>=4.13"]
 
 [project.scripts]
 mcp_logic = "mcp_logic.server:cli"
