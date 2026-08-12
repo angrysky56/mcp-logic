@@ -59,8 +59,14 @@ presented as a proof. A `warning` field accompanies it.
 - **When to use**: To verify that a set of axioms is consistent, or to explore what kind of structures a theory permits.
 - **Input Parameters**:
   - `premises` (Array of Strings): FOL axioms to satisfy.
-  - `domain_size` (Integer, Optional): Fixed size of the domain (default: searches 2-10).
+  - `domain_size` (Integer, Optional): Fixed size of the domain. Omit it to
+    enable automatic complete search for recognized decidable fragments.
   - `timeout` (Integer, Optional): Search timeout in seconds (default: 60).
+- **Decision metadata**: `decided: true` means the tool completed a licensed
+  finite-model decision procedure for the reported `fragment` and
+  `model_bound`. In that case, `no_model_found` means no model exists at all.
+  When `decided` is false, it means only that the configured finite search
+  found none.
 - **Pro Tip**: If `find_model` returns a model, your axioms are **consistent**.
 
 ### 3. `find_counterexample` — Disproving Claims (Mace4)
@@ -73,6 +79,8 @@ presented as a proof. A `warning` field accompanies it.
   - `conclusion` (String): The statement to disprove.
   - `domain_size` (Integer, Optional): Domain limit.
   - `timeout` (Integer, Optional): Search timeout in seconds.
+- **Decision metadata**: With `decided: true`, `no_model_found` establishes
+  that no counterexample exists; otherwise it remains a bounded-search result.
 
 ### 4. `check_well_formed` — Syntax Guard
 

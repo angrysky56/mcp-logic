@@ -333,6 +333,10 @@ The `ask_logic_advisor` tool uses a 3-phase agentic pipeline:
 - ✅ **Variational Free Energy (VFE) Engine:** Implemented abductive reasoning that ranks hypotheses using a non-dogmatic Cournot-Gaifman prior to elegantly satisfy Ockham's Razor.
 - ✅ **Smart Prover Routing:** `prove` tool automatically routes pure propositional queries to the HCC engine, and first-order queries to Prover9.
 - ✅ **Configurable Model Finder:** `find_model` and `find_counterexample` now support custom timeouts and structured predicate/function extraction.
+- ✅ **Decidable Fragment Search:** BSR and safely bounded monadic theories
+  receive a complete `1..model_bound` search. A `no_model_found` response is
+  absolute only when accompanied by `decided: true`; other searches retain the
+  finite-bound hedge.
 
 ## What's New in v0.2.0
 

@@ -24,6 +24,11 @@ from mcp_logic.categorical_helpers import (
     group_axioms,
     monoid_axioms,
 )
+from mcp_logic.fragments import (
+    FragmentVerdict,
+    classify_counterexample,
+    classify_fragment,
+)
 from mcp_logic.hcc_prover import check_contingency
 
 # Import new modules
@@ -327,6 +332,94 @@ class LogicEngine:
                 pass  # Temp file cleanup failed, not critical
 
 
+def _annotate_fragment_result(
+    result: dict[str, Any],
+    verdict: FragmentVerdict,
+    *,
+    complete_search: bool,
+) -> dict[str, Any]:
+    """Attach fragment evidence without overstating an incomplete search."""
+
+    result["fragment"] = verdict.fragment
+    result["model_bound"] = verdict.model_bound
+    result["fragment_reason"] = verdict.reason
+    result["decided"] = complete_search and result.get("result") in {
+        "model_found",
+        "no_model_found",
+    }
+    if result["decided"] and result.get("result") == "no_model_found":
+        result["reason"] = (
+            f"No model exists. The complete {verdict.fragment} finite-model "
+            f"search exhausted every domain size from 1 through "
+            f"{verdict.model_bound}."
+        )
+        result.pop("hint", None)
+        if "interpretation" in result:
+            result["interpretation"] = (
+                "No counterexample exists. The complete finite-model search "
+                f"establishes that the conclusion follows in the "
+                f"{verdict.fragment} fragment."
+            )
+    return result
+
+
+async def _find_model_with_fragment(
+    mace4: Mace4Wrapper,
+    premises: list[str],
+    domain_size: int | None = None,
+    *,
+    timeout: int = 60,
+    verbose: bool = False,
+) -> dict[str, Any]:
+    verdict = classify_fragment(premises)
+    complete_search = verdict.decidable and domain_size is None
+    if complete_search:
+        result = await mace4.find_model(
+            premises,
+            timeout=timeout,
+            verbose=verbose,
+            max_domain_size=verdict.model_bound,
+        )
+    else:
+        result = await mace4.find_model(
+            premises,
+            domain_size,
+            timeout=timeout,
+            verbose=verbose,
+        )
+    return _annotate_fragment_result(result, verdict, complete_search=complete_search)
+
+
+async def _find_counterexample_with_fragment(
+    mace4: Mace4Wrapper,
+    premises: list[str],
+    conclusion: str,
+    domain_size: int | None = None,
+    *,
+    timeout: int = 60,
+    verbose: bool = False,
+) -> dict[str, Any]:
+    verdict = classify_counterexample(premises, conclusion)
+    complete_search = verdict.decidable and domain_size is None
+    if complete_search:
+        result = await mace4.find_counterexample(
+            premises,
+            conclusion,
+            timeout=timeout,
+            verbose=verbose,
+            max_domain_size=verdict.model_bound,
+        )
+    else:
+        result = await mace4.find_counterexample(
+            premises,
+            conclusion,
+            domain_size,
+            timeout=timeout,
+            verbose=verbose,
+        )
+    return _annotate_fragment_result(result, verdict, complete_search=complete_search)
+
+
 class _SolverBridge:
     """Adapts LogicEngine + Mace4 + HCC into the SolverBackend protocol.
 
@@ -356,8 +449,11 @@ class _SolverBridge:
     ) -> dict[str, Any]:
         if not self._engine.mace4:
             return {"error": "Mace4 not available"}
-        return await self._engine.mace4.find_model(
-            premises, domain_size, timeout=timeout
+        return await _find_model_with_fragment(
+            self._engine.mace4,
+            premises,
+            domain_size,
+            timeout=timeout,
         )
 
     async def find_counterexample(
@@ -370,8 +466,12 @@ class _SolverBridge:
     ) -> dict[str, Any]:
         if not self._engine.mace4:
             return {"error": "Mace4 not available"}
-        return await self._engine.mace4.find_counterexample(
-            premises, conclusion, domain_size, timeout=timeout
+        return await _find_counterexample_with_fragment(
+            self._engine.mace4,
+            premises,
+            conclusion,
+            domain_size,
+            timeout=timeout,
         )
 
     async def check_well_formed(self, statements: list[str]) -> dict[str, Any]:
@@ -510,9 +610,12 @@ async def main(
                     "this to check that a set of axioms is satisfiable / "
                     "consistent, or to see an example structure. Returns the "
                     "domain size and the interpretation of each predicate, "
-                    "function, and constant. result='no_model_found' means no "
-                    "model exists up to the domain bound (premises may be "
-                    "contradictory). A found model carries a 'vacuity' "
+                    "function, and constant. For recognized BSR or bounded "
+                    "monadic theories, the tool searches the complete finite "
+                    "range and returns decided=true; in that case "
+                    "result='no_model_found' means no model exists at all. "
+                    "Otherwise it means only that no model was found within "
+                    "the searched bound. A found model carries a 'vacuity' "
                     "assessment; a degenerate empty-world model (every "
                     "predicate false everywhere) is flagged with a top-level "
                     "'warning' and only VACUOUSLY satisfies universal "
@@ -531,7 +634,8 @@ async def main(
                             "type": "integer",
                             "description": (
                                 "Exact domain size to search. Omit to scan sizes "
-                                "2..10 automatically."
+                                "automatically and enable complete fragment "
+                                "search when a decidable fragment is recognized."
                             ),
                         },
                         "verbose": {
@@ -550,9 +654,12 @@ async def main(
                     "conclusion is false (via Mace4). This is the natural "
                     "complement to 'prove': if prove returns 'unprovable', call "
                     "this to get the concrete counterexample. result='model_found' "
-                    "means the argument is invalid; 'no_model_found' means none "
-                    "exists up to the domain bound (the argument may be valid — "
-                    "confirm with prove). A found counter-model carries a "
+                    "means the argument is invalid. For recognized BSR or "
+                    "bounded monadic countermodel theories, decided=true means "
+                    "the complete finite range was searched; then "
+                    "'no_model_found' proves that no counterexample exists. "
+                    "Without decided=true, it means none exists only up to the "
+                    "searched bound. A found counter-model carries a "
                     "'vacuity' assessment; an empty-world counter-model is "
                     "flagged with a 'warning' and exhibits no real instance "
                     "where the premises hold and the conclusion fails."
@@ -573,7 +680,8 @@ async def main(
                             "type": "integer",
                             "description": (
                                 "Exact domain size to search. Omit to scan sizes "
-                                "2..10 automatically."
+                                "automatically and enable complete fragment "
+                                "search when a decidable fragment is recognized."
                             ),
                         },
                         "verbose": {
@@ -976,7 +1084,8 @@ async def main(
                     ]
 
                 domain_size = arguments.get("domain_size")
-                result = await engine.mace4.find_model(
+                result = await _find_model_with_fragment(
+                    engine.mace4,
                     arguments["premises"],
                     domain_size,
                     verbose=arguments.get("verbose", False),
@@ -995,7 +1104,8 @@ async def main(
                     ]
 
                 domain_size = arguments.get("domain_size")
-                result = await engine.mace4.find_counterexample(
+                result = await _find_counterexample_with_fragment(
+                    engine.mace4,
                     arguments["premises"],
                     arguments["conclusion"],
                     domain_size,

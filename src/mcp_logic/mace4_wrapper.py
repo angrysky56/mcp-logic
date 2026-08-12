@@ -7,12 +7,28 @@ find a counterexample showing why the statement isn't universally true.
 """
 
 import asyncio
+import itertools
 import logging
 import os
 import tempfile
 from pathlib import Path
 from typing import Any
 
+from mcp_logic.fol_ast import (
+    And,
+    Atom,
+    Equal,
+    Exists,
+    Forall,
+    Formula,
+    Iff,
+    Implies,
+    Not,
+    Or,
+    function_symbols,
+    parse,
+    predicate_symbols,
+)
 from mcp_logic.syntax_validator import normalize_formula
 
 logger = logging.getLogger("mcp_logic.mace4")
@@ -45,6 +61,7 @@ class Mace4Wrapper:
         premises: list[str],
         goal: str | None = None,
         domain_size: int | None = None,
+        max_domain_size: int | None = None,
         timeout: int = 60,
     ) -> Path:
         """Create a Mace4 input file
@@ -53,6 +70,8 @@ class Mace4Wrapper:
             premises: List of logical premises (assumptions)
             goal: Goal to disprove (for counterexamples). If None, find any model.
             domain_size: Maximum domain size to search. If None, Mace4 will increment.
+            max_domain_size: Search every size from 1 through this inclusive
+                upper bound. Mutually exclusive with ``domain_size``.
             timeout: Maximum search time in seconds.
 
         Returns:
@@ -60,8 +79,19 @@ class Mace4Wrapper:
         """
         content = []
 
-        # Domain size configuration
-        if domain_size is not None:
+        # Domain size configuration. Decision procedures need a complete range
+        # beginning at 1; an exact search at only the upper bound is unsound
+        # for theories that admit singleton models but no larger ones.
+        if domain_size is not None and max_domain_size is not None:
+            raise ValueError("domain_size and max_domain_size are mutually exclusive")
+        if max_domain_size is not None:
+            if max_domain_size < 1:
+                raise ValueError("max_domain_size must be at least 1")
+            # LADR's Mace4 rejects start_size=1. ``find_model`` handles the
+            # singleton domain exactly before constructing this 2..N search.
+            content.append("assign(domain_size, 2).")
+            content.append(f"assign(end_size, {max_domain_size}).")
+        elif domain_size is not None:
             content.append(f"assign(domain_size, {domain_size}).")
         else:
             content.append("assign(domain_size, 2).")  # Start at 2
@@ -419,12 +449,108 @@ class Mace4Wrapper:
             )
         return assessment
 
+    @staticmethod
+    def _evaluate_singleton(
+        formula: Formula, predicate_values: dict[str, bool]
+    ) -> bool:
+        """Evaluate a formula in the unique one-element domain.
+
+        Every term denotes the sole element, so equality and quantifiers are
+        fixed; only one Boolean value per predicate symbol remains to choose.
+        """
+
+        if isinstance(formula, Atom):
+            return predicate_values[formula.predicate]
+        if isinstance(formula, Equal):
+            return True
+        if isinstance(formula, Not):
+            return not Mace4Wrapper._evaluate_singleton(formula.inner, predicate_values)
+        if isinstance(formula, And):
+            return Mace4Wrapper._evaluate_singleton(
+                formula.left, predicate_values
+            ) and Mace4Wrapper._evaluate_singleton(formula.right, predicate_values)
+        if isinstance(formula, Or):
+            return Mace4Wrapper._evaluate_singleton(
+                formula.left, predicate_values
+            ) or Mace4Wrapper._evaluate_singleton(formula.right, predicate_values)
+        if isinstance(formula, Implies):
+            return not Mace4Wrapper._evaluate_singleton(
+                formula.left, predicate_values
+            ) or Mace4Wrapper._evaluate_singleton(formula.right, predicate_values)
+        if isinstance(formula, Iff):
+            return Mace4Wrapper._evaluate_singleton(
+                formula.left, predicate_values
+            ) == Mace4Wrapper._evaluate_singleton(formula.right, predicate_values)
+        if isinstance(formula, (Forall, Exists)):
+            return Mace4Wrapper._evaluate_singleton(formula.body, predicate_values)
+        raise TypeError(f"Unsupported formula node: {type(formula).__name__}")
+
+    @staticmethod
+    def _find_singleton_model(
+        premises: list[str], goal: str | None = None
+    ) -> dict[str, Any] | None:
+        """Return a satisfying one-element interpretation, if one exists."""
+
+        formulas = [
+            parse(normalize_formula(formula).rstrip(".")) for formula in premises
+        ]
+        if goal is not None:
+            formulas.append(Not(parse(normalize_formula(goal).rstrip("."))))
+
+        predicates: dict[str, int] = {}
+        functions: dict[str, int] = {}
+        for formula in formulas:
+            for name, arity in predicate_symbols(formula).items():
+                previous = predicates.get(name)
+                if previous is not None and previous != arity:
+                    raise ValueError(
+                        f"Predicate {name!r} has inconsistent arities "
+                        f"{previous} and {arity}"
+                    )
+                predicates[name] = arity
+            for name, arity in function_symbols(formula).items():
+                previous = functions.get(name)
+                if previous is not None and previous != arity:
+                    raise ValueError(
+                        f"Function {name!r} has inconsistent arities "
+                        f"{previous} and {arity}"
+                    )
+                functions[name] = arity
+
+        names = sorted(predicates)
+        for values in itertools.product((False, True), repeat=len(names)):
+            assignment = dict(zip(names, values, strict=True))
+            if not all(
+                Mace4Wrapper._evaluate_singleton(formula, assignment)
+                for formula in formulas
+            ):
+                continue
+
+            model: dict[str, Any] = {
+                "domain_size": 1,
+                "predicates": {
+                    name: ["1" if assignment[name] else "0"] for name in names
+                },
+                "functions": {
+                    name: ["0"] for name, arity in functions.items() if arity >= 1
+                },
+                "constants": {
+                    name: ["0"] for name, arity in functions.items() if arity == 0
+                },
+                "raw_interpretation": "singleton interpretation (computed exactly)",
+            }
+            model["vacuity"] = Mace4Wrapper._assess_vacuity(model)
+            return model
+        return None
+
     async def find_model(
         self,
         premises: list[str],
         domain_size: int | None = None,
         timeout: int = 60,
         verbose: bool = False,
+        *,
+        max_domain_size: int | None = None,
     ) -> dict[str, Any]:
         """Find a model that satisfies the given premises
 
@@ -433,12 +559,30 @@ class Mace4Wrapper:
             domain_size: Specific domain size, or None to search incrementally
             timeout: Maximum search time in seconds
             verbose: Include raw Mace4 output when True.
+            max_domain_size: Search all domain sizes from 1 through this bound.
 
         Returns:
             Result dictionary with model if found
         """
+        if domain_size == 1 or max_domain_size is not None:
+            singleton = self._find_singleton_model(premises)
+            if singleton is not None:
+                result: dict[str, Any] = {"result": "model_found", "model": singleton}
+                if singleton["vacuity"]["is_vacuous"]:
+                    result["warning"] = singleton["vacuity"]["note"]
+                return result
+            if domain_size == 1 or max_domain_size == 1:
+                return {
+                    "result": "no_model_found",
+                    "reason": "No model exists in the one-element domain.",
+                }
+
         input_file = self._create_input_file(
-            premises, goal=None, domain_size=domain_size, timeout=timeout
+            premises,
+            goal=None,
+            domain_size=domain_size,
+            max_domain_size=max_domain_size,
+            timeout=timeout,
         )
         return await self._run_mace4(input_file, timeout=timeout, verbose=verbose)
 
@@ -449,6 +593,8 @@ class Mace4Wrapper:
         domain_size: int | None = None,
         timeout: int = 60,
         verbose: bool = False,
+        *,
+        max_domain_size: int | None = None,
     ) -> dict[str, Any]:
         """Find a counterexample showing the conclusion doesn't follow from premises
 
@@ -460,12 +606,39 @@ class Mace4Wrapper:
             conclusion: Conclusion to disprove
             domain_size: Specific domain size, or None to search incrementally
             timeout: Maximum search time in seconds
+            max_domain_size: Search all domain sizes from 1 through this bound.
 
         Returns:
             Result dictionary with counterexample model if found
         """
+        if domain_size == 1 or max_domain_size is not None:
+            singleton = self._find_singleton_model(premises, conclusion)
+            if singleton is not None:
+                result = {"result": "model_found", "model": singleton}
+                if singleton["vacuity"]["is_vacuous"]:
+                    result["warning"] = singleton["vacuity"]["note"]
+                result["interpretation"] = (
+                    "Counterexample found: The premises are satisfied but "
+                    f"the conclusion '{conclusion}' is FALSE in this model."
+                )
+                return result
+            if domain_size == 1 or max_domain_size == 1:
+                return {
+                    "result": "no_model_found",
+                    "reason": "No counterexample exists in the one-element domain.",
+                    "interpretation": (
+                        "No counterexample found within the domain-size bound. "
+                        "The conclusion may be valid — use the 'prove' tool to "
+                        "confirm it follows from the premises."
+                    ),
+                }
+
         input_file = self._create_input_file(
-            premises, goal=conclusion, domain_size=domain_size, timeout=timeout
+            premises,
+            goal=conclusion,
+            domain_size=domain_size,
+            max_domain_size=max_domain_size,
+            timeout=timeout,
         )
         result = await self._run_mace4(input_file, timeout=timeout, verbose=verbose)
 
