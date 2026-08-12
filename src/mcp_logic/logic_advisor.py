@@ -1455,13 +1455,21 @@ def _is_solver_error(output: dict[str, Any]) -> bool:
 
 
 def _is_undecided(output: dict[str, Any]) -> bool:
-    """Whether Z3 returned no verdict at all.
+    """Whether the solver returned no verdict at all.
 
-    ``unknown`` is not an error — the formalization was fine, Z3 just could
-    not decide (nonlinear arithmetic, quantifiers). There is still nothing
-    to report as verified, and repairing the syntax would not help.
+    Three shapes, none of them errors and none of them answers:
+
+    * Z3 ``unknown`` — nonlinear arithmetic or quantifiers defeated it.
+    * Prover9 ``inconclusive`` — the search stopped on a resource limit
+      rather than saturating, so it is NOT evidence the conclusion is
+      false (first-order validity is only semi-decidable).
+    * an explicit ``definitive: False``.
+
+    Repairing the formalization would not help in any of these cases.
     """
-    return output.get("result") == "unknown"
+    if output.get("result") in {"unknown", "inconclusive", "timeout"}:
+        return True
+    return output.get("definitive") is False
 
 
 def _strip_think_blocks(text: str) -> str:

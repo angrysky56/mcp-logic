@@ -157,20 +157,45 @@ def _compose_path_helper(path: list[str], result_name: str) -> dict:
 
 
 def monoid_axioms() -> list[str]:
-    """Axioms for a monoid (category with one object)"""
+    """Axioms for a monoid (a category with one object).
+
+    Stated **equationally**, with ``mult`` as a binary function symbol and
+    ``e`` a constant.  This is the standard encoding for total algebraic
+    operations — it matches the TPTP algebra problem sets and plays to
+    Prover9's equality reasoning (paramodulation and demodulation), which
+    is far stronger than its handling of relational encodings.
+
+    Why not a 3-place ``mult(x, y, z)`` relation?  A function symbol is
+    single-valued *by construction*, so uniqueness of products comes free.
+    The earlier relational form had to obtain that from a subtle side
+    effect of an unquantified variable inside the associativity axiom —
+    correct, but invisible, and destroyed by any well-meaning tidy-up.
+    See ``tests/test_categorical_axioms.py``.
+
+    Returns:
+        Equational axioms for a monoid.
+    """
     return [
-        # Binary operation
-        "all x all y exists z (mult(x,y,z))",
-        # Associativity
-        "all x all y all z all xy all yz all xyz all ybc ((mult(x,y,xy) & mult(y,z,yz) & mult(xy,z,xyz) & mult(x,yz,xyz2)) -> xyz = xyz2)",
-        # Identity exists (e is a constant)
-        "all x (mult(e,x,x) & mult(x,e,x))",
+        # Identity, on both sides.
+        "all x (mult(e,x) = x)",
+        "all x (mult(x,e) = x)",
+        # Associativity.
+        "all x all y all z (mult(mult(x,y),z) = mult(x,mult(y,z)))",
     ]
 
 
 def group_axioms() -> list[str]:
-    """Axioms for a group"""
+    """Axioms for a group.
+
+    A monoid plus a two-sided inverse, given as a unary function ``inv``
+    rather than an existential.  Naming the inverse is what makes ordinary
+    group theorems expressible at all: ``inv(inv(x)) = x`` cannot even be
+    *stated* when inverses are hidden behind ``exists y (...)``.
+
+    Returns:
+        Equational axioms for a group.
+    """
     return monoid_axioms() + [
-        # Inverses exist
-        "all x exists y (mult(x,y,e) & mult(y,x,e))"
+        "all x (mult(x,inv(x)) = e)",
+        "all x (mult(inv(x),x) = e)",
     ]

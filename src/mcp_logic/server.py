@@ -84,6 +84,71 @@ def _extract_proof_stats(output: str) -> dict[str, Any]:
     return stats
 
 
+# Prover9 announces why it stopped: "------ process 123 exit (sos_empty) ------"
+_EXIT_REASON_RE = re.compile(r"exit\s*\(([a-z_]+)\)")
+
+#: The only failure exit that licenses a definitive "does not follow".
+#: Resolution is refutation-complete, so an emptied set-of-support means the
+#: negated goal is genuinely satisfiable.  Every other exit is a resource
+#: limit, which tells us nothing — first-order validity is only
+#: semi-decidable (Harrison, *Handbook of Practical Logic*, §7.6, Church's
+#: theorem), so "no proof found" is NOT "invalid" unless the search was
+#: exhaustive.
+_SATURATION_EXIT = "sos_empty"
+
+
+def _classify_search_failure(output: str) -> dict[str, Any]:
+    """Distinguish a genuine non-entailment from giving up.
+
+    Prover9 prints ``SEARCH FAILED`` for both, which previously collapsed
+    into a single confident ``unprovable``.  A run that died on
+    ``max_megs`` would then be reported as "the conclusion does not
+    follow" — a verdict the evidence does not support.
+
+    Args:
+        output: Raw Prover9 stdout.
+
+    Returns:
+        ``result="unprovable"`` with ``definitive=True`` only when the
+        search saturated; otherwise ``result="inconclusive"``.
+    """
+    match = _EXIT_REASON_RE.search(output)
+    exit_reason = match.group(1) if match else "unknown"
+
+    if exit_reason == _SATURATION_EXIT:
+        return {
+            "result": "unprovable",
+            "definitive": True,
+            "exit_reason": exit_reason,
+            "reason": (
+                "Proof search SATURATED: every consequence was derived and no "
+                "contradiction arose. The conclusion genuinely does not follow "
+                "from the premises."
+            ),
+            "hint": (
+                "Use find_counterexample with the same premises and conclusion "
+                "to obtain a concrete model where the premises hold but the "
+                "conclusion fails."
+            ),
+        }
+
+    return {
+        "result": "inconclusive",
+        "definitive": False,
+        "exit_reason": exit_reason,
+        "reason": (
+            f"Proof search stopped early ({exit_reason}) without exhausting "
+            "the search space. This is NOT evidence that the conclusion is "
+            "false — first-order validity is only semi-decidable, so an "
+            "abandoned search tells us nothing either way."
+        ),
+        "hint": (
+            "Retry with a longer timeout, or call find_counterexample: a "
+            "counter-model would settle it in the negative."
+        ),
+    }
+
+
 def _is_fol_formula(formula: str) -> bool:
     """Determine whether a formula is first-order logic (vs. propositional).
 
@@ -217,19 +282,7 @@ class LogicEngine:
                         result["complete_output"] = stdout_str
                     return result
                 elif "SEARCH FAILED" in stdout_str:
-                    result = {
-                        "result": "unprovable",
-                        "reason": (
-                            "Proof search exhausted without finding a proof. "
-                            "The conclusion does not follow from the premises, "
-                            "or the premises are too weak."
-                        ),
-                        "hint": (
-                            "Use find_counterexample with the same premises and "
-                            "conclusion to obtain a concrete model where the "
-                            "premises hold but the conclusion fails."
-                        ),
-                    }
+                    result = _classify_search_failure(stdout_str)
                     if verbose:
                         result["complete_output"] = stdout_str
                     return result

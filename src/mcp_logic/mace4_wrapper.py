@@ -189,7 +189,25 @@ class Mace4Wrapper:
                 elif exhausted:
                     result = {
                         "result": "no_model_found",
-                        "reason": "Mace4 exhausted the search space up to the domain-size bound; no finite model exists.",
+                        # NOT "no model exists".  Mace4 searches finite
+                        # domains up to a bound; plenty of consistent
+                        # theories have only infinite models (a strict
+                        # dense order, say), and a theory can also have a
+                        # finite model larger than the bound.  Only for
+                        # fragments with the finite model property does an
+                        # exhausted bounded search decide the question —
+                        # see Harrison, *Handbook of Practical Logic*, §5.5.
+                        "reason": (
+                            "Mace4 found no model with a domain up to the "
+                            "size bound. This does NOT mean the premises are "
+                            "inconsistent: they may have only infinite "
+                            "models, or a finite model larger than the bound."
+                        ),
+                        "hint": (
+                            "Raise domain_size to search further, or use "
+                            "prove to show the premises entail a "
+                            "contradiction, which would settle inconsistency."
+                        ),
                     }
                     if verbose:
                         result["complete_output"] = stdout_str
