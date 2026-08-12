@@ -6,11 +6,10 @@
         "--directory",
         "/your-path-to/mcp-logic",
         "run",
-        "python",
-        "-m",
         "mcp_logic",
         "--prover-path",
-        "/your-path-to/mcp-logic/ladr/bin"
+        "/your-path-to/mcp-logic/ladr/bin",
+        "--no-advisor"
       ]
     }
   }

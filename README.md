@@ -137,11 +137,10 @@ Add to your Claude Desktop MCP config (auto-generated at `claude-app-config.json
         "--directory",
         "/absolute/path/to/mcp-logic",
         "run",
-        "python",
-        "-m",
         "mcp_logic",
         "--prover-path",
-        "/absolute/path/to/mcp-logic/ladr/bin"
+        "/absolute/path/to/mcp-logic/ladr/bin",
+        "--no-advisor"
       ]
     }
   }
@@ -150,7 +149,22 @@ Add to your Claude Desktop MCP config (auto-generated at `claude-app-config.json
 
 **Important:** Replace `/absolute/path/to/mcp-logic` with your actual repository path.
 
-To disable the advisor (e.g., on low-memory systems), add `"--no-advisor"` to the args list.
+Remove `"--no-advisor"` only when you have installed the optional advisor model
+dependencies and intend to use `ask_logic_advisor`.
+
+### Codex Integration
+
+Register the stdio server globally with absolute paths:
+
+```bash
+codex mcp add mcp-logic -- \
+  /absolute/path/to/mcp-logic/.venv/bin/mcp_logic \
+  --prover-path /absolute/path/to/mcp-logic/ladr/bin \
+  --no-advisor
+```
+
+Confirm the saved command with `codex mcp get mcp-logic`. Restart Codex after
+adding or changing the server so its tools are loaded into the next session.
 
 ## Available Tools
 
@@ -253,12 +267,13 @@ mcp-logic/
 │   ├── categorical_helpers.py # Category theory utilities
 │   ├── hcc_prover.py          # Hypersequent Contingency Calculus prover
 │   ├── vfe_engine.py          # Variational Free Energy abductive engine
-│   └── formula_ast.py         # Propositional logic AST and parser
+│   ├── formula_ast.py         # Propositional logic AST and parser
+│   └── fol_ast.py             # First-order AST, parser, and transformations
 ├── ladr/                      # Auto-installed Prover9/Mace4 binaries
 │   └── bin/
 │       ├── prover9
 │       └── mace4
-├── tests/                     # Test suite (171 tests)
+├── tests/                     # Unit, solver integration, and MCP stdio tests
 ├── linux-setup-script.sh      # Linux/macOS core setup
 ├── windows-setup-mcp-logic.bat # Windows core setup
 ├── setup-advisor.sh           # Linux/macOS advisor setup
@@ -334,11 +349,26 @@ The `ask_logic_advisor` tool uses a 3-phase agentic pipeline:
 
 ## Development
 
-Run tests (no venv activation needed):
+The test fixtures automatically discover the bundled `ladr/bin/prover9` and
+`ladr/bin/mace4`; no `LADR_PATH` is needed for a normal checkout.
+
+Run the complete suite:
 
 ```bash
-uv run --directory . pytest tests/ -v
+.venv/bin/python -m pytest tests/ -q
 ```
+
+Run only the end-to-end MCP stdio test, which starts the server and exercises
+both Prover9 and Mace4 through MCP tool calls:
+
+```bash
+.venv/bin/python -m pytest tests/test_mcp_stdio_integration.py -q
+```
+
+Restricted process sandboxes can allow the LADR binaries to start while
+preventing them from making progress, producing misleading 30/60-second
+timeouts. Run solver-backed tests outside that sandbox; do not compensate by
+increasing the solver timeout.
 
 ## Documentation
 
