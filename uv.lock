@@ -490,7 +490,7 @@ dev = [
 requires-dist = [
     { name = "huggingface-hub", marker = "extra == 'advisor'", specifier = ">=0.24.0" },
     { name = "llama-cpp-python", marker = "extra == 'advisor'", specifier = ">=0.3.0" },
-    { name = "mcp", specifier = ">=1.0.0" },
+    { name = "mcp", specifier = ">=1.6,<2" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pytest-asyncio" },
     { name = "z3-solver", marker = "extra == 'smt'", specifier = ">=4.13" },
