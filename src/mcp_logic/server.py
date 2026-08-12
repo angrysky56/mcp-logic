@@ -17,7 +17,7 @@ from typing import Any
 
 import mcp.server.stdio
 import mcp.types as types
-from mcp.server import Server
+from mcp.server import Server, ServerRequestContext
 
 from mcp_logic.categorical_helpers import (
     CategoricalHelpers,
@@ -542,13 +542,15 @@ def _err(payload: Any) -> types.CallToolResult:
 
 
 async def _handle_list_tools(
-    ctx: Any, params: types.PaginatedRequestParams | None = None
+    _ctx: ServerRequestContext[Any],
+    _params: types.PaginatedRequestParams | None = None,
 ) -> types.ListToolsResult:
     """List available MCP tools (SDK v2 handler signature).
 
-    Args:
-        ctx: Server request context (unused but required by SDK v2).
-        params: Pagination params (unused).
+    The SDK invokes request handlers positionally as ``(ctx, params)``, so
+    both parameters are part of the required shape even though the tool
+    catalogue is static. They are underscore-prefixed to say "deliberately
+    unused" rather than suppressed with a lint directive.
 
     Returns:
         ListToolsResult containing the full tool catalogue.
@@ -947,7 +949,7 @@ async def _handle_list_tools(
 
 
 async def _handle_call_tool(
-    ctx: Any, params: types.CallToolRequestParams
+    ctx: ServerRequestContext[Any], params: types.CallToolRequestParams
 ) -> types.CallToolResult:
     """Dispatch an MCP tool call (SDK v2 handler signature).
 
@@ -961,12 +963,16 @@ async def _handle_call_tool(
     Returns:
         CallToolResult with is_error=False on success or is_error=True on error.
     """
-    engine: LogicEngine = ctx.lifespan_context["engine"]
-    advisor: LogicAdvisor = ctx.lifespan_context["advisor"]
     name: str = params.name
-    arguments: dict[str, Any] = dict(params.arguments or {})
 
     try:
+        # Inside the try on purpose: unpacking the lifespan context can fail
+        # (a mis-wired server, a lifespan that never ran), and this handler
+        # promises to return a result rather than raise past the transport.
+        engine: LogicEngine = ctx.lifespan_context["engine"]
+        advisor: LogicAdvisor = ctx.lifespan_context["advisor"]
+        arguments: dict[str, Any] = dict(params.arguments or {})
+
         if not arguments:
             arguments = {}
 
@@ -1301,7 +1307,15 @@ async def _handle_call_tool(
         else:
             raise ValueError(f"Unknown tool: {name}")
 
-    except (KeyError, ValueError, RuntimeError) as e:
+    except Exception as e:  # noqa: BLE001 - this is the transport boundary
+        # Deliberately broad. Under SDK v1 the runtime wrapped ANY handler
+        # exception into CallToolResult(is_error=True); v2 turns an escaping
+        # exception into a JSON-RPC protocol error instead. Catching only
+        # (KeyError, ValueError, RuntimeError) would therefore have silently
+        # narrowed what the client sees: a TypeError or OSError from a solver
+        # subprocess used to come back as a tool error, and would now fail the
+        # request at the protocol level. BaseException (CancelledError,
+        # KeyboardInterrupt) still propagates, which is correct.
         logger.error("Tool error: %s", e, exc_info=True)
         return _err({"error": str(e), "type": type(e).__name__})
 
