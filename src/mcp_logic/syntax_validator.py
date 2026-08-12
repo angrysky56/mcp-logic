@@ -7,6 +7,13 @@ Provides early feedback on common syntax errors to improve user experience.
 import re
 from typing import Any
 
+from mcp_logic.fol_ast import (
+    ParseError,
+    free_variables,
+    parse,
+    unused_bound_variables,
+)
+
 
 def normalize_formula(formula: str) -> str:
     """Normalize a formula to the syntax LADR (Prover9/Mace4) accepts.
@@ -72,6 +79,12 @@ class SyntaxValidator:
 
         # Check for common mistakes
         self._check_common_mistakes(formula_clean)
+
+        # Scope lint must use the real tree. Running it only after the
+        # inexpensive syntax checks avoids piling secondary warnings onto an
+        # input that is already malformed.
+        if not self.errors:
+            self._check_variable_scope(formula_clean)
 
         return (len(self.errors) == 0, self.errors, self.warnings)
 
@@ -198,6 +211,29 @@ class SyntaxValidator:
         if "()" in formula:
             self.errors.append(
                 "Empty parentheses found - predicates and functions must have arguments"
+            )
+
+    def _check_variable_scope(self, formula: str) -> None:
+        """Warn about legal but easily invisible quantifier behavior."""
+
+        try:
+            tree = parse(formula)
+        except ParseError:
+            # The legacy validator accepts a wider LADR surface (notably list
+            # terms and multi-variable binders). Do not replace that contract
+            # with an error merely because the structural lint cannot apply.
+            return
+
+        for variable in sorted(free_variables(tree)):
+            self.warnings.append(
+                f"`{variable}` is free and will be implicitly universally "
+                f"quantified. If that is intended, bind it explicitly with "
+                f"`all {variable} (...)`."
+            )
+        for variable in sorted(unused_bound_variables(tree)):
+            self.warnings.append(
+                f"`{variable}` is bound but unused. Remove the quantifier or "
+                "use the variable in its scope."
             )
 
 

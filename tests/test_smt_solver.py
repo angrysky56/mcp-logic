@@ -75,6 +75,20 @@ class TestEntailment:
         result = check_entailment(["(> n 0)"], "(> (* 2 n) n)", {"n": "Int"})
         assert result["result"] == "proved"
 
+    def test_mixed_arithmetic_and_predicate_entailment(self) -> None:
+        result = check_entailment(
+            [
+                "(forall ((age Int)) (=> (> age 18) (can_vote age)))",
+                "(= alice_age 20)",
+            ],
+            "(can_vote alice_age)",
+            {"alice_age": "Int"},
+            {"can_vote": ["Int", "Bool"]},
+        )
+
+        assert result["result"] == "proved"
+        assert result["status"] == "PROVED"
+
     def test_real_arithmetic(self) -> None:
         result = check_entailment(["(> x 0.0)"], "(> (* x x) 0.0)", {"x": "Real"})
         assert result["result"] == "proved"

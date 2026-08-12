@@ -14,6 +14,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from mcp_logic.epistemic_status import with_status
 from mcp_logic.fol_ast import (
     And,
     Atom,
@@ -570,12 +571,15 @@ class Mace4Wrapper:
                 result: dict[str, Any] = {"result": "model_found", "model": singleton}
                 if singleton["vacuity"]["is_vacuous"]:
                     result["warning"] = singleton["vacuity"]["note"]
-                return result
+                return with_status(result, operation="find_model")
             if domain_size == 1 or max_domain_size == 1:
-                return {
-                    "result": "no_model_found",
-                    "reason": "No model exists in the one-element domain.",
-                }
+                return with_status(
+                    {
+                        "result": "no_model_found",
+                        "reason": "No model exists in the one-element domain.",
+                    },
+                    operation="find_model",
+                )
 
         input_file = self._create_input_file(
             premises,
@@ -584,7 +588,8 @@ class Mace4Wrapper:
             max_domain_size=max_domain_size,
             timeout=timeout,
         )
-        return await self._run_mace4(input_file, timeout=timeout, verbose=verbose)
+        result = await self._run_mace4(input_file, timeout=timeout, verbose=verbose)
+        return with_status(result, operation="find_model")
 
     async def find_counterexample(
         self,
@@ -621,17 +626,20 @@ class Mace4Wrapper:
                     "Counterexample found: The premises are satisfied but "
                     f"the conclusion '{conclusion}' is FALSE in this model."
                 )
-                return result
+                return with_status(result, operation="find_counterexample")
             if domain_size == 1 or max_domain_size == 1:
-                return {
-                    "result": "no_model_found",
-                    "reason": "No counterexample exists in the one-element domain.",
-                    "interpretation": (
-                        "No counterexample found within the domain-size bound. "
-                        "The conclusion may be valid — use the 'prove' tool to "
-                        "confirm it follows from the premises."
-                    ),
-                }
+                return with_status(
+                    {
+                        "result": "no_model_found",
+                        "reason": "No counterexample exists in the one-element domain.",
+                        "interpretation": (
+                            "No counterexample found within the domain-size bound. "
+                            "The conclusion may be valid — use the 'prove' tool to "
+                            "confirm it follows from the premises."
+                        ),
+                    },
+                    operation="find_counterexample",
+                )
 
         input_file = self._create_input_file(
             premises,
@@ -657,4 +665,4 @@ class Mace4Wrapper:
                 "follows from the premises."
             )
 
-        return result
+        return with_status(result, operation="find_counterexample")

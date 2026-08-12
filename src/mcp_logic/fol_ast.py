@@ -347,6 +347,25 @@ def bound_variables(formula: Formula) -> set[str]:
     raise TypeError(f"Unsupported formula node: {type(formula).__name__}")
 
 
+def unused_bound_variables(formula: Formula) -> set[str]:
+    """Return binders whose variable has no occurrence in its own scope."""
+
+    if isinstance(formula, (Atom, Equal)):
+        return set()
+    if isinstance(formula, Not):
+        return unused_bound_variables(formula.inner)
+    if isinstance(formula, (And, Or, Implies, Iff)):
+        return unused_bound_variables(formula.left) | unused_bound_variables(
+            formula.right
+        )
+    if isinstance(formula, (Forall, Exists)):
+        unused = unused_bound_variables(formula.body)
+        if formula.variable not in free_variables(formula.body):
+            unused.add(formula.variable)
+        return unused
+    raise TypeError(f"Unsupported formula node: {type(formula).__name__}")
+
+
 def _record_symbol(symbols: dict[str, int], name: str, arity: int) -> None:
     previous = symbols.get(name)
     if previous is not None and previous != arity:

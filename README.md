@@ -335,8 +335,13 @@ The `ask_logic_advisor` tool uses a 3-phase agentic pipeline:
 - ✅ **Configurable Model Finder:** `find_model` and `find_counterexample` now support custom timeouts and structured predicate/function extraction.
 - ✅ **Decidable Fragment Search:** BSR and safely bounded monadic theories
   receive a complete `1..model_bound` search. A `no_model_found` response is
-  absolute only when accompanied by `decided: true`; other searches retain the
-  finite-bound hedge.
+  absolute only with a context-licensed `PROVED` or `REFUTED` status; a
+  `BOUNDED_NO_MODEL` response retains the finite-bound hedge.
+- ✅ **Theory-aware Advisor Routing:** Solver selection follows parsed formula
+  structure, including mixed arithmetic and uninterpreted predicates, rather
+  than English keyword matching.
+- ✅ **Variable-scope Lint:** `check_well_formed` warns about implicit universal
+  quantification and unused binders without rejecting legal Prover9 formulas.
 
 ## What's New in v0.2.0
 

@@ -47,7 +47,7 @@ class TestSearchFailureClassification:
     def test_saturation_is_a_definitive_non_entailment(self) -> None:
         result = _classify_search_failure(SATURATED)
         assert result["result"] == "unprovable"
-        assert result["definitive"] is True
+        assert result["status"] == "SATURATED_NO_PROOF"
         assert result["exit_reason"] == "sos_empty"
         assert "SATURATED" in result["reason"]
 
@@ -60,7 +60,7 @@ class TestSearchFailureClassification:
     ) -> None:
         result = _classify_search_failure(output)
         assert result["result"] == "inconclusive"
-        assert result["definitive"] is False
+        assert result["status"] == "RESOURCE_LIMIT"
         assert result["exit_reason"] == expected_reason
 
     def test_inconclusive_does_not_claim_the_conclusion_is_false(self) -> None:
@@ -73,7 +73,7 @@ class TestSearchFailureClassification:
         # into a verdict.
         result = _classify_search_failure("SEARCH FAILED\n")
         assert result["result"] == "inconclusive"
-        assert result["definitive"] is False
+        assert result["status"] == "RESOURCE_LIMIT"
         assert result["exit_reason"] == "unknown"
 
 
@@ -99,7 +99,7 @@ class TestAgainstRealProver9:
         result = await engine.run_prover(path, timeout=30)  # type: ignore[attr-defined]
 
         assert result["result"] == "unprovable"
-        assert result["definitive"] is True
+        assert result["status"] == "SATURATED_NO_PROOF"
         assert result["exit_reason"] == "sos_empty"
 
     @pytest.mark.asyncio

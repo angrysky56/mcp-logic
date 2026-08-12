@@ -24,6 +24,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from mcp_logic.epistemic_status import with_status
+
 logger = logging.getLogger("mcp_logic.smt_solver")
 
 # Declarations are prepended to every script so callers can write plain
@@ -130,7 +132,9 @@ def check_entailment(
     try:
         decls = build_declarations(variables or {}, functions)
     except ValueError as exc:
-        return {"result": "error", "reason": str(exc)}
+        return with_status(
+            {"result": "error", "reason": str(exc)}, operation="prove_arithmetic"
+        )
 
     # Assert the premises and the negated conclusion together.
     script = "\n".join(
@@ -147,46 +151,58 @@ def check_entailment(
     try:
         solver.add(z3.parse_smt2_string(script))
     except z3.Z3Exception as exc:
-        return {
-            "result": "error",
-            "reason": "SMT-LIB syntax error",
-            "error": str(exc),
-            "hint": (
-                "Constraints use prefix notation: (> x 0), (= y (+ x 1)). "
-                "Every variable must appear in `variables`."
-            ),
-            "script": script,
-        }
+        return with_status(
+            {
+                "result": "error",
+                "reason": "SMT-LIB syntax error",
+                "error": str(exc),
+                "hint": (
+                    "Constraints use prefix notation: (> x 0), (= y (+ x 1)). "
+                    "Every variable must appear in `variables`."
+                ),
+                "script": script,
+            },
+            operation="prove_arithmetic",
+        )
 
     verdict = solver.check()
 
     if verdict == z3.unsat:
-        return {
-            "result": "proved",
-            "reason": (
-                "The negated conclusion is unsatisfiable, so the conclusion "
-                "follows from the premises."
-            ),
-        }
+        return with_status(
+            {
+                "result": "proved",
+                "reason": (
+                    "The negated conclusion is unsatisfiable, so the conclusion "
+                    "follows from the premises."
+                ),
+            },
+            operation="prove_arithmetic",
+        )
 
     if verdict == z3.sat:
-        return {
-            "result": "counterexample",
-            "reason": (
-                "Found an assignment where every premise holds but the "
-                "conclusion fails."
-            ),
-            "counterexample": _model_to_dict(solver.model()),
-        }
+        return with_status(
+            {
+                "result": "counterexample",
+                "reason": (
+                    "Found an assignment where every premise holds but the "
+                    "conclusion fails."
+                ),
+                "counterexample": _model_to_dict(solver.model()),
+            },
+            operation="prove_arithmetic",
+        )
 
-    return {
-        "result": "unknown",
-        "reason": (
-            f"Z3 could not decide within {timeout_ms} ms "
-            f"({solver.reason_unknown()}). This is common for nonlinear "
-            f"arithmetic and quantified formulas."
-        ),
-    }
+    return with_status(
+        {
+            "result": "unknown",
+            "reason": (
+                f"Z3 could not decide within {timeout_ms} ms "
+                f"({solver.reason_unknown()}). This is common for nonlinear "
+                f"arithmetic and quantified formulas."
+            ),
+        },
+        operation="prove_arithmetic",
+    )
 
 
 def check_satisfiable(
@@ -213,7 +229,9 @@ def check_satisfiable(
     try:
         decls = build_declarations(variables or {}, functions)
     except ValueError as exc:
-        return {"result": "error", "reason": str(exc)}
+        return with_status(
+            {"result": "error", "reason": str(exc)}, operation="check_satisfiable"
+        )
 
     script = "\n".join([decls, *[f"(assert {c})" for c in constraints]])
 
@@ -223,26 +241,38 @@ def check_satisfiable(
     try:
         solver.add(z3.parse_smt2_string(script))
     except z3.Z3Exception as exc:
-        return {
-            "result": "error",
-            "reason": "SMT-LIB syntax error",
-            "error": str(exc),
-            "script": script,
-        }
+        return with_status(
+            {
+                "result": "error",
+                "reason": "SMT-LIB syntax error",
+                "error": str(exc),
+                "script": script,
+            },
+            operation="check_satisfiable",
+        )
 
     verdict = solver.check()
 
     if verdict == z3.sat:
-        return {
-            "result": "satisfiable",
-            "model": _model_to_dict(solver.model()),
-        }
+        return with_status(
+            {
+                "result": "satisfiable",
+                "model": _model_to_dict(solver.model()),
+            },
+            operation="check_satisfiable",
+        )
     if verdict == z3.unsat:
-        return {
-            "result": "unsatisfiable",
-            "reason": "The constraints contradict each other.",
-        }
-    return {
-        "result": "unknown",
-        "reason": f"Z3 could not decide ({solver.reason_unknown()}).",
-    }
+        return with_status(
+            {
+                "result": "unsatisfiable",
+                "reason": "The constraints contradict each other.",
+            },
+            operation="check_satisfiable",
+        )
+    return with_status(
+        {
+            "result": "unknown",
+            "reason": f"Z3 could not decide ({solver.reason_unknown()}).",
+        },
+        operation="check_satisfiable",
+    )

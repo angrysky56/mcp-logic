@@ -14,11 +14,13 @@ You are equipped with **mcp-logic**, a high-fidelity formal reasoning engine. It
 Getting this wrong is the most common failure: sending `x + 1 > x` to
 Prover9 produces a syntax error or an endless search, never an answer.
 
-## ⚠️ Trust the `verified` flag
+## ⚠️ Trust `status`
 
-`ask_logic_advisor` returns `verified: true/false`. **False means no solver
-verdict was obtained** — the answer is not machine-checked and must never be
-presented as a proof. A `warning` field accompanies it.
+Every solver result uses one epistemic vocabulary: `PROVED`, `REFUTED`,
+`SATURATED_NO_PROOF`, `BOUNDED_NO_MODEL`, `RESOURCE_LIMIT`, or `MALFORMED`.
+`ask_logic_advisor.verified` is derived from that status for compatibility;
+it is true only for the first three. Never present `RESOURCE_LIMIT` as an
+answer or promote `BOUNDED_NO_MODEL` into an absolute no-model claim.
 
 ---
 
@@ -62,11 +64,11 @@ presented as a proof. A `warning` field accompanies it.
   - `domain_size` (Integer, Optional): Fixed size of the domain. Omit it to
     enable automatic complete search for recognized decidable fragments.
   - `timeout` (Integer, Optional): Search timeout in seconds (default: 60).
-- **Decision metadata**: `decided: true` means the tool completed a licensed
-  finite-model decision procedure for the reported `fragment` and
-  `model_bound`. In that case, `no_model_found` means no model exists at all.
-  When `decided` is false, it means only that the configured finite search
-  found none.
+- **Decision metadata**: `status: REFUTED` with `no_model_found` means the tool
+  completed a licensed finite-model decision procedure for the reported
+  `fragment` and `model_bound`, so no model exists at all.
+  `status: BOUNDED_NO_MODEL` means only that the configured finite search found
+  none.
 - **Pro Tip**: If `find_model` returns a model, your axioms are **consistent**.
 
 ### 3. `find_counterexample` — Disproving Claims (Mace4)
@@ -79,15 +81,17 @@ presented as a proof. A `warning` field accompanies it.
   - `conclusion` (String): The statement to disprove.
   - `domain_size` (Integer, Optional): Domain limit.
   - `timeout` (Integer, Optional): Search timeout in seconds.
-- **Decision metadata**: With `decided: true`, `no_model_found` establishes
-  that no counterexample exists; otherwise it remains a bounded-search result.
+- **Decision metadata**: `status: PROVED` with `no_model_found` establishes
+  that no counterexample exists; `BOUNDED_NO_MODEL` remains bounded evidence.
 
 ### 4. `check_well_formed` — Syntax Guard
 
 **Purpose**: Validate formula syntax and get detailed error/warning feedback.
 
 - **When to use**: BEFORE calling `prove` or `find_model` for complex or user-provided formulas.
-- **Validation Features**: Catches unmatched parentheses, invalid characters, and quantifier scope issues.
+- **Validation Features**: Catches unmatched parentheses, invalid characters,
+  arity conflicts, and quantifier-scope issues. It also warns when a variable
+  is implicitly universally quantified or when a bound variable is unused.
 
 ### 4b. `prove_arithmetic` — Numbers (Z3 SMT)
 

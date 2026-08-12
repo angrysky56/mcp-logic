@@ -25,6 +25,7 @@ from mcp_logic.categorical_helpers import (
     group_axioms,
     monoid_axioms,
 )
+from mcp_logic.epistemic_status import EpistemicStatus, with_status
 from mcp_logic.fragments import (
     FragmentVerdict,
     classify_counterexample,
@@ -115,8 +116,8 @@ def _classify_search_failure(output: str) -> dict[str, Any]:
         output: Raw Prover9 stdout.
 
     Returns:
-        ``result="unprovable"`` with ``definitive=True`` only when the
-        search saturated; otherwise ``result="inconclusive"``.
+        ``SATURATED_NO_PROOF`` only when the search saturated; otherwise
+        ``RESOURCE_LIMIT``.
     """
     match = _EXIT_REASON_RE.search(output)
     exit_reason = match.group(1) if match else "unknown"
@@ -124,7 +125,7 @@ def _classify_search_failure(output: str) -> dict[str, Any]:
     if exit_reason == _SATURATION_EXIT:
         return {
             "result": "unprovable",
-            "definitive": True,
+            "status": EpistemicStatus.SATURATED_NO_PROOF,
             "exit_reason": exit_reason,
             "reason": (
                 "Proof search SATURATED: every consequence was derived and no "
@@ -140,7 +141,7 @@ def _classify_search_failure(output: str) -> dict[str, Any]:
 
     return {
         "result": "inconclusive",
-        "definitive": False,
+        "status": EpistemicStatus.RESOURCE_LIMIT,
         "exit_reason": exit_reason,
         "reason": (
             f"Proof search stopped early ({exit_reason}) without exhausting "
@@ -281,6 +282,7 @@ class LogicEngine:
                 if "THEOREM PROVED" in stdout_str:
                     result = {
                         "result": "proved",
+                        "status": EpistemicStatus.PROVED,
                         "proof": _extract_proof(stdout_str),
                         "stats": _extract_proof_stats(stdout_str),
                     }
@@ -295,6 +297,7 @@ class LogicEngine:
                 elif "Fatal error" in stderr_str or "Fatal error" in stdout_str:
                     return {
                         "result": "error",
+                        "status": EpistemicStatus.MALFORMED,
                         "reason": "Prover9 syntax/processing error",
                         "error": (stderr_str or stdout_str).strip()[-1000:],
                         "hint": (
@@ -306,6 +309,7 @@ class LogicEngine:
                 else:
                     return {
                         "result": "error",
+                        "status": EpistemicStatus.RESOURCE_LIMIT,
                         "reason": "Unexpected Prover9 output",
                         "output": stdout_str.strip()[-1000:],
                         "error": stderr_str.strip()[-500:],
@@ -320,12 +324,17 @@ class LogicEngine:
                     pass
                 return {
                     "result": "timeout",
+                    "status": EpistemicStatus.RESOURCE_LIMIT,
                     "reason": f"Proof search exceeded {timeout} seconds",
                 }
 
         except (OSError, ValueError) as e:
             logger.error("Prover error: %s", e)
-            return {"result": "error", "reason": str(e)}
+            return {
+                "result": "error",
+                "status": EpistemicStatus.RESOURCE_LIMIT,
+                "reason": str(e),
+            }
         finally:
             try:
                 input_path.unlink()  # Clean up temp file
@@ -344,11 +353,8 @@ def _annotate_fragment_result(
     result["fragment"] = verdict.fragment
     result["model_bound"] = verdict.model_bound
     result["fragment_reason"] = verdict.reason
-    result["decided"] = complete_search and result.get("result") in {
-        "model_found",
-        "no_model_found",
-    }
-    if result["decided"] and result.get("result") == "no_model_found":
+    if complete_search and result.get("result") == "no_model_found":
+        result["status"] = EpistemicStatus.REFUTED
         result["reason"] = (
             f"No model exists. The complete {verdict.fragment} finite-model "
             f"search exhausted every domain size from 1 through "
@@ -388,6 +394,7 @@ async def _find_model_with_fragment(
             timeout=timeout,
             verbose=verbose,
         )
+    result = with_status(result, operation="find_model")
     return _annotate_fragment_result(result, verdict, complete_search=complete_search)
 
 
@@ -418,7 +425,14 @@ async def _find_counterexample_with_fragment(
             timeout=timeout,
             verbose=verbose,
         )
-    return _annotate_fragment_result(result, verdict, complete_search=complete_search)
+    annotated = _annotate_fragment_result(
+        with_status(result, operation="find_counterexample"),
+        verdict,
+        complete_search=complete_search,
+    )
+    if complete_search and annotated.get("result") == "no_model_found":
+        annotated["status"] = EpistemicStatus.PROVED
+    return annotated
 
 
 class _SolverBridge:
@@ -449,7 +463,11 @@ class _SolverBridge:
         timeout: int = 60,
     ) -> dict[str, Any]:
         if not self._engine.mace4:
-            return {"error": "Mace4 not available"}
+            return {
+                "result": "error",
+                "status": EpistemicStatus.RESOURCE_LIMIT,
+                "error": "Mace4 not available",
+            }
         return await _find_model_with_fragment(
             self._engine.mace4,
             premises,
@@ -466,7 +484,11 @@ class _SolverBridge:
         timeout: int = 60,
     ) -> dict[str, Any]:
         if not self._engine.mace4:
-            return {"error": "Mace4 not available"}
+            return {
+                "result": "error",
+                "status": EpistemicStatus.RESOURCE_LIMIT,
+                "error": "Mace4 not available",
+            }
         return await _find_counterexample_with_fragment(
             self._engine.mace4,
             premises,
@@ -476,38 +498,57 @@ class _SolverBridge:
         )
 
     async def check_well_formed(self, statements: list[str]) -> dict[str, Any]:
-        return validate_formulas(statements)
+        return with_status(validate_formulas(statements), operation="validate")
 
     async def prove_arithmetic(
         self,
         premises: list[str],
         conclusion: str,
         variables: dict[str, str] | None = None,
+        functions: dict[str, list[str]] | None = None,
     ) -> dict[str, Any]:
         if not z3_available():
-            return {"error": "z3-solver is not installed"}
+            return {
+                "result": "error",
+                "status": EpistemicStatus.RESOURCE_LIMIT,
+                "error": "z3-solver is not installed",
+            }
         return await asyncio.to_thread(
-            check_entailment, premises, conclusion, variables or {}
+            check_entailment,
+            premises,
+            conclusion,
+            variables or {},
+            functions or {},
         )
 
     async def check_satisfiable(
         self,
         constraints: list[str],
         variables: dict[str, str] | None = None,
+        functions: dict[str, list[str]] | None = None,
     ) -> dict[str, Any]:
         if not z3_available():
-            return {"error": "z3-solver is not installed"}
-        return await asyncio.to_thread(check_satisfiable, constraints, variables or {})
+            return {
+                "result": "error",
+                "status": EpistemicStatus.RESOURCE_LIMIT,
+                "error": "z3-solver is not installed",
+            }
+        return await asyncio.to_thread(
+            check_satisfiable, constraints, variables or {}, functions or {}
+        )
 
     async def check_contingency(self, formula: str) -> dict[str, Any]:
         res = check_contingency(formula)
-        return {
-            "formula": formula,
-            "is_contingent": res.is_contingent,
-            "is_tautology": res.is_tautology,
-            "is_contradiction": res.is_contradiction,
-            "message": res.message,
-        }
+        return with_status(
+            {
+                "formula": formula,
+                "is_contingent": res.is_contingent,
+                "is_tautology": res.is_tautology,
+                "is_contradiction": res.is_contradiction,
+                "message": res.message,
+            },
+            operation="check_contingency",
+        )
 
 
 def _ok(payload: Any) -> types.CallToolResult:
@@ -622,10 +663,10 @@ async def _handle_list_tools(
                 "domain size and the interpretation of each predicate, "
                 "function, and constant. For recognized BSR or bounded "
                 "monadic theories, the tool searches the complete finite "
-                "range and returns decided=true; in that case "
-                "result='no_model_found' means no model exists at all. "
-                "Otherwise it means only that no model was found within "
-                "the searched bound. A found model carries a 'vacuity' "
+                "range. status='REFUTED' with result='no_model_found' means "
+                "no model exists at all; status='BOUNDED_NO_MODEL' means "
+                "only that none was found within the searched bound. A "
+                "found model carries a 'vacuity' "
                 "assessment; a degenerate empty-world model (every "
                 "predicate false everywhere) is flagged with a top-level "
                 "'warning' and only VACUOUSLY satisfies universal "
@@ -665,11 +706,10 @@ async def _handle_list_tools(
                 "complement to 'prove': if prove returns 'unprovable', call "
                 "this to get the concrete counterexample. result='model_found' "
                 "means the argument is invalid. For recognized BSR or "
-                "bounded monadic countermodel theories, decided=true means "
-                "the complete finite range was searched; then "
-                "'no_model_found' proves that no counterexample exists. "
-                "Without decided=true, it means none exists only up to the "
-                "searched bound. A found counter-model carries a "
+                "bounded monadic countermodel theories, status='PROVED' with "
+                "result='no_model_found' proves that no counterexample "
+                "exists. status='BOUNDED_NO_MODEL' means none exists only up "
+                "to the searched bound. A found counter-model carries a "
                 "'vacuity' assessment; an empty-world counter-model is "
                 "flagged with a 'warning' and exhibits no real instance "
                 "where the premises hold and the conclusion fails."
@@ -1001,7 +1041,13 @@ async def _handle_call_tool(
             validation = validate_formulas(all_formulas)
 
             if not validation["valid"]:
-                return _ok({"result": "syntax_error", "validation": validation})
+                return _ok(
+                    {
+                        "result": "syntax_error",
+                        "status": EpistemicStatus.MALFORMED,
+                        "validation": validation,
+                    }
+                )
 
             # Smart Routing: Check if propositional (CORR-02)
             is_propositional = not any(_is_fol_formula(f) for f in all_formulas)
@@ -1022,7 +1068,8 @@ async def _handle_call_tool(
                     if hcc_res.is_tautology:
                         results = {
                             "result": "proved",
-                            "status": (
+                            "status": EpistemicStatus.PROVED,
+                            "reason": (
                                 "Valid: the conclusion is true in every "
                                 "model of the premises (the implication is "
                                 "a tautology)."
@@ -1031,7 +1078,8 @@ async def _handle_call_tool(
                     elif hcc_res.is_contradiction:
                         results = {
                             "result": "refuted",
-                            "status": (
+                            "status": EpistemicStatus.REFUTED,
+                            "reason": (
                                 "The premises are mutually contradictory, so "
                                 "they prove anything trivially (and their "
                                 "negation holds in no model)."
@@ -1040,7 +1088,8 @@ async def _handle_call_tool(
                     else:
                         results = {
                             "result": "unprovable",
-                            "status": (
+                            "status": EpistemicStatus.SATURATED_NO_PROOF,
+                            "reason": (
                                 "Invalid: the conclusion does not follow. "
                                 "There is at least one assignment making the "
                                 "premises true and the conclusion false."
@@ -1072,7 +1121,7 @@ async def _handle_call_tool(
 
         elif name == "check_well_formed":
             validation = validate_formulas(arguments["statements"])
-            return _ok(validation)
+            return _ok(with_status(validation, operation="validate"))
 
         elif name == "find_model":
             if not engine.mace4:
@@ -1162,7 +1211,7 @@ async def _handle_call_tool(
                 "message": res.message,
                 "proof_trace_summary": simple_trace,
             }
-            return _ok(result)
+            return _ok(with_status(result, operation="check_contingency"))
 
         elif name == "abductive_explain":
             observation = arguments["observation"]
@@ -1279,6 +1328,7 @@ async def _handle_call_tool(
                 result = await advisor.solve(question, context)
                 response = {
                     "answer": result.answer,
+                    "status": result.status,
                     # False means the solver did NOT return a verdict —
                     # the answer is not machine-checked and must not be
                     # presented to the user as a proof.

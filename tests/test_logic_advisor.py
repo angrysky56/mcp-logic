@@ -25,10 +25,11 @@ from mcp_logic.logic_advisor import (
     _HF_REVISION,
     AdvisorDisabledError,
     AdvisorResult,
+    FormulaTheory,
     LogicAdvisor,
     _strip_think_blocks,
+    classify_formalization,
     infer_tool,
-    looks_arithmetic,
     normalize_plan,
     normalize_syntax,
     parse_formalization,
@@ -136,12 +137,14 @@ class FakeSolver:
         premises: list[str],
         conclusion: str,
         variables: dict[str, str] | None = None,
+        functions: dict[str, list[str]] | None = None,
     ) -> dict[str, Any]:
         self.prove_arithmetic_calls.append(
             {
                 "premises": premises,
                 "conclusion": conclusion,
                 "variables": variables,
+                "functions": functions,
             }
         )
         return self.prove_arithmetic_result
@@ -150,9 +153,14 @@ class FakeSolver:
         self,
         constraints: list[str],
         variables: dict[str, str] | None = None,
+        functions: dict[str, list[str]] | None = None,
     ) -> dict[str, Any]:
         self.check_satisfiable_calls.append(
-            {"constraints": constraints, "variables": variables}
+            {
+                "constraints": constraints,
+                "variables": variables,
+                "functions": functions,
+            }
         )
         return self.check_satisfiable_result
 
@@ -901,35 +909,22 @@ class TestIdleUnload:
 
 
 class TestArithmeticRouting:
-    """Numeric questions must reach Z3, not Prover9."""
+    """Parsed formulas, not English keywords, determine the solver."""
 
-    @pytest.mark.parametrize(
-        "question",
-        [
-            "If x is greater than 0, is 2x greater than x?",
-            "Alice is at least 18. Is she at least 16?",
-            "Is the sum of two even numbers even?",
-            "Is there a number between 0 and 10 divisible by 3?",
-        ],
-    )
-    def test_arithmetic_detected(self, question: str) -> None:
-        assert looks_arithmetic(question) is True
-
-    @pytest.mark.parametrize(
-        "question",
-        [
-            "All humans are mortal. Socrates is a human. Is Socrates mortal?",
-            "All cats are animals. Some animals are dogs. Do cats bark?",
-            "Is p or not p a tautology?",
-            "What is your favourite colour?",
-            # Regression: quantifier phrasing that merely sounds numeric.
-            "Find a model where there exist at least two distinct elements.",
-            "Is there at most one largest element in this ordering?",
-            "Every number-crunching machine is a machine. Is that valid?",
-        ],
-    )
-    def test_non_arithmetic_stays_on_prover9(self, question: str) -> None:
-        assert looks_arithmetic(question) is False
+    def test_theory_is_classified_from_parsed_formula_structure(self) -> None:
+        assert classify_formalization(["all x (human(x) -> mortal(x))"]) == (
+            FormulaTheory.PURE_FOL
+        )
+        assert classify_formalization(["(> x 0)"]) == FormulaTheory.ARITHMETIC
+        assert classify_formalization(["(= alice_age 20)"]) == (
+            FormulaTheory.ARITHMETIC
+        )
+        assert (
+            classify_formalization(
+                ["(forall ((age Int)) (=> (> age 18) (can_vote age)))"]
+            )
+            == FormulaTheory.MIXED
+        )
 
     def test_smt_lines_become_entailment_plan(self) -> None:
         raw = "VAR: x Int\nPREMISE: (> x 0)\nGOAL: (> (* 2 x) x)"
@@ -937,6 +932,20 @@ class TestArithmeticRouting:
         assert plan["tool"] == "prove_arithmetic"
         assert plan["variables"] == {"x": "Int"}
         assert plan["conclusion"] == "(> (* 2 x) x)"
+
+    def test_mixed_smt_lines_declare_bool_valued_predicates(self) -> None:
+        raw = (
+            "VAR: alice_age Int\n"
+            "PRED: can_vote Int\n"
+            "PREMISE: (forall ((age Int)) (=> (> age 18) (can_vote age)))\n"
+            "PREMISE: (= alice_age 20)\n"
+            "GOAL: (can_vote alice_age)"
+        )
+
+        plan = parse_smt_formalization(raw)
+
+        assert plan["functions"] == {"can_vote": ["Int", "Bool"]}
+        assert plan["variables"] == {"alice_age": "Int"}
 
     def test_smt_lines_without_goal_become_satisfiability(self) -> None:
         raw = "VAR: n Int\nPREMISE: (> n 0)\nPREMISE: (< n 10)"
@@ -982,6 +991,33 @@ class TestArithmeticRouting:
         assert result.verified is True
         assert len(fake_solver.prove_arithmetic_calls) == 1
         # Prover9 must not have been handed an arithmetic question.
+        assert fake_solver.prove_calls == []
+
+    @pytest.mark.asyncio
+    async def test_pipeline_routes_mixed_voting_formula_to_z3(
+        self, fake_solver: FakeSolver
+    ) -> None:
+        advisor = _make_advisor(fake_solver)
+        _mock_llm_responses(
+            advisor,
+            [
+                "VAR: alice_age Int\n"
+                "PRED: can_vote Int\n"
+                "PREMISE: (forall ((age Int)) (=> (> age 18) (can_vote age)))\n"
+                "PREMISE: (= alice_age 20)\n"
+                "GOAL: (can_vote alice_age)",
+                "Yes, Alice can vote.",
+            ],
+        )
+
+        result = await advisor.solve(
+            "Everyone over 18 can vote. Alice is 20. Can Alice vote?"
+        )
+
+        assert result.status == "PROVED"
+        assert fake_solver.prove_arithmetic_calls[0]["functions"] == {
+            "can_vote": ["Int", "Bool"]
+        }
         assert fake_solver.prove_calls == []
 
     @pytest.mark.asyncio

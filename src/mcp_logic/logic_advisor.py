@@ -27,9 +27,13 @@ import logging
 import re
 from collections import OrderedDict
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
+from mcp_logic.epistemic_status import EpistemicStatus, with_status
+from mcp_logic.fol_ast import ParseError
+from mcp_logic.fol_ast import parse as parse_fol
 from mcp_logic.syntax_contract import PROVER9_SYNTAX_RULES
 
 if TYPE_CHECKING:
@@ -112,6 +116,104 @@ _SYNTAX_REWRITES: tuple[tuple[str, str], ...] = (
 _MULTISPACE_RE = re.compile(r"[ \t]{2,}")
 
 
+class FormulaTheory(str, Enum):
+    """Theory features found in a parsed formalization."""
+
+    PURE_FOL = "pure_fol"
+    ARITHMETIC = "arithmetic"
+    MIXED = "mixed"
+    MALFORMED = "malformed"
+
+
+_SMT_ARITHMETIC_HEADS = frozenset(
+    {"+", "-", "*", "/", "div", "mod", "rem", "abs", ">", "<", ">=", "<="}
+)
+_SMT_LOGIC_HEADS = frozenset(
+    {"and", "or", "not", "xor", "=>", "=", "distinct", "ite", "let"}
+)
+_SMT_TOKEN_RE = re.compile(r"\s*([()]|[^()\s]+)")
+_SMT_NUMERAL_RE = re.compile(r"-?(?:\d+(?:\.\d*)?|\.\d+)\Z")
+
+
+def _parse_s_expression(source: str) -> object:
+    """Parse one SMT-LIB S-expression into nested Python lists."""
+
+    tokens = [match.group(1) for match in _SMT_TOKEN_RE.finditer(source)]
+    index = 0
+
+    def parse_item() -> object:
+        nonlocal index
+        if index >= len(tokens):
+            raise ValueError("unexpected end of SMT-LIB expression")
+        lexeme = tokens[index]
+        index += 1
+        if lexeme != "(":
+            if lexeme == ")":
+                raise ValueError("unexpected closing parenthesis")
+            return lexeme
+        items: list[object] = []
+        while index < len(tokens) and tokens[index] != ")":
+            items.append(parse_item())
+        if index >= len(tokens):
+            raise ValueError("unclosed SMT-LIB expression")
+        index += 1
+        return items
+
+    parsed = parse_item()
+    if index != len(tokens):
+        raise ValueError("multiple SMT-LIB expressions on one formula line")
+    return parsed
+
+
+def _smt_theory_features(expression: object) -> tuple[bool, bool]:
+    """Return ``(has_arithmetic, has_uninterpreted_application)``."""
+
+    if isinstance(expression, str):
+        return bool(_SMT_NUMERAL_RE.fullmatch(expression)), False
+    if not isinstance(expression, list) or not expression:
+        return False, False
+    head = expression[0]
+    if not isinstance(head, str):
+        return False, False
+
+    arithmetic = head in _SMT_ARITHMETIC_HEADS
+    uninterpreted = head not in (
+        _SMT_ARITHMETIC_HEADS | _SMT_LOGIC_HEADS | {"forall", "exists"}
+    )
+    children = expression[2:] if head in {"forall", "exists"} else expression[1:]
+    for child in children:
+        child_arithmetic, child_uninterpreted = _smt_theory_features(child)
+        arithmetic = arithmetic or child_arithmetic
+        uninterpreted = uninterpreted or child_uninterpreted
+    return arithmetic, uninterpreted
+
+
+def classify_formalization(formulas: list[str]) -> FormulaTheory:
+    """Classify theory use by parsing formula text, never question wording."""
+
+    has_arithmetic = False
+    has_uninterpreted = False
+    for source in formulas:
+        try:
+            parse_fol(source.removesuffix(".").strip())
+        except ParseError:
+            try:
+                expression = _parse_s_expression(source)
+            except ValueError:
+                return FormulaTheory.MALFORMED
+            arithmetic, uninterpreted = _smt_theory_features(expression)
+            has_arithmetic = has_arithmetic or arithmetic
+            has_uninterpreted = has_uninterpreted or uninterpreted
+        else:
+            has_uninterpreted = True
+
+    if has_arithmetic and has_uninterpreted:
+        return FormulaTheory.MIXED
+    if has_arithmetic:
+        return FormulaTheory.ARITHMETIC
+    return FormulaTheory.PURE_FOL
+
+
 def normalize_syntax(formula: str) -> str:
     """Rewrite common non-Prover9 notation into Prover9/Mace4 syntax.
 
@@ -187,12 +289,14 @@ class SolverBackend(Protocol):
         premises: list[str],
         conclusion: str,
         variables: dict[str, str] | None = None,
+        functions: dict[str, list[str]] | None = None,
     ) -> dict[str, Any]: ...
 
     async def check_satisfiable(
         self,
         constraints: list[str],
         variables: dict[str, str] | None = None,
+        functions: dict[str, list[str]] | None = None,
     ) -> dict[str, Any]: ...
 
 
@@ -213,13 +317,23 @@ class AdvisorResult:
     steps: list[str] = field(default_factory=list)
     """Human-readable log of what the advisor did."""
 
-    verified: bool = True
-    """Whether the solver actually ran and returned a usable verdict.
+    status: EpistemicStatus = EpistemicStatus.RESOURCE_LIMIT
+    """How much the solver result establishes."""
 
-    ``False`` means the answer is NOT machine-checked — the formalization
-    failed validation, or the solver errored.  Callers must not present an
-    unverified answer as a proof.
-    """
+    @property
+    def verified(self) -> bool:
+        """Whether the status represents a machine-checked decision.
+
+        ``False`` means the answer is NOT machine-checked — the formalization
+        failed validation, or the solver errored.  Callers must not present an
+        unverified answer as a proof.
+        """
+
+        return self.status in {
+            EpistemicStatus.PROVED,
+            EpistemicStatus.REFUTED,
+            EpistemicStatus.SATURATED_NO_PROOF,
+        }
 
 
 # ── System prompts ──────────────────────────────────────────────────────
@@ -286,14 +400,18 @@ Rules:
 # also warns it has had "no instruction-following alignment work", so the
 # narrowest possible task wins.
 _FORMALIZE_LINES_SYSTEM = """\
-You are a first-order logic translator. Translate the user's question into \
-Prover9 formulas.
+You are a logic translator. Translate the user's question into formulas. Use \
+Prover9 syntax for ordinary first-order logic, and SMT-LIB syntax whenever the \
+meaning depends on arithmetic.
 
 ## Output format — one item per line, nothing else
 PREMISE: <formula>      (one line per premise; omit if there are none)
 GOAL: <formula>         (the conclusion, only for prove/find_counterexample)
 FORMULA: <formula>      (only for check_contingency)
 DOMAIN: <integer>       (optional, only for find_model)
+VAR: <name> <Int|Real|Bool>       (SMT-LIB only)
+PRED: <name> <arg sort>...         (SMT-LIB Bool-valued predicate)
+FUN: <name> <arg sort>... -> <result sort>  (SMT-LIB function)
 
 ## Prover9 syntax
 {syntax_rules}
@@ -320,6 +438,13 @@ Question: Find a world where every element has a successor and no element is its
 PREMISE: all x exists y (succ(x,y))
 PREMISE: all x (-succ(x,x))
 
+Question: Everyone over 18 can vote. Alice is 20. Can Alice vote?
+VAR: alice_age Int
+PRED: can_vote Int
+PREMISE: (forall ((age Int)) (=> (> age 18) (can_vote age)))
+PREMISE: (= alice_age 20)
+GOAL: (can_vote alice_age)
+
 ## Two rules that override everything else
 
 1. TRANSLATE, DO NOT ANSWER. You are never being asked to decide the
@@ -327,6 +452,9 @@ PREMISE: all x (-succ(x,x))
    emit the FORMULA: line and stop. Writing "TAUTOLOGY" is WRONG.
 2. NEVER write an English sentence after PREMISE:, GOAL: or FORMULA:.
    "All cats are animals" is WRONG; "all x (cat(x) -> animal(x))" is RIGHT.
+3. If arithmetic affects the answer, use SMT-LIB for every formula in the
+   translation. Declare free constants with VAR and predicates/functions with
+   PRED/FUN. Mixed arithmetic-and-predicate questions belong in SMT-LIB too.
 
 If the question is not a logic problem at all, output exactly:
 NONE
@@ -528,7 +656,7 @@ class LogicAdvisor:
                 formalization=cached.formalization,
                 solver_output=cached.solver_output,
                 steps=[*cached.steps, "(served from cache)"],
-                verified=cached.verified,
+                status=cached.status,
             )
 
         result = await self._solve_uncached(question, context)
@@ -561,33 +689,25 @@ class LogicAdvisor:
         if context:
             user_msg = f"{question}\n\n### Context\n{context}"
 
-        # Arithmetic goes to Z3, everything else to Prover9/Mace4.  Prover9
-        # has no theory of arithmetic at all, so a numeric question sent
-        # there does not fail loudly — it grinds or rejects the syntax.
-        arithmetic = looks_arithmetic(question)
-        if arithmetic:
-            steps.append("Question looks arithmetic — routing to Z3.")
-            lines = await self._llm_call(
-                system=_SMT_FORMALIZE_SYSTEM,
-                user=user_msg,
-                max_tokens=_DEFAULT_MAX_TOKENS,
-            )
-            # SMT-LIB is already the target syntax; the Prover9 rewrites
-            # would corrupt it (`->` is not an SMT operator).
+        # ONE narrow translation call, then route on the parsed formulas.
+        # Question wording is deliberately absent from theory selection: a
+        # digit in prose is not arithmetic, while a mixed quantified formula
+        # may require it even when the prose uses no arithmetic keyword.
+        lines = await self._llm_call(
+            system=_FORMALIZE_LINES_SYSTEM,
+            user=user_msg,
+            max_tokens=_DEFAULT_MAX_TOKENS,
+        )
+        translated_formulas = [
+            value
+            for label, value in _LINE_RE.findall(_strip_think_blocks(lines))
+            if label.upper() in {"PREMISE", "GOAL", "FORMULA", "STATEMENT"}
+        ]
+        theory = classify_formalization(translated_formulas)
+        if theory in {FormulaTheory.ARITHMETIC, FormulaTheory.MIXED}:
+            steps.append(f"Parsed formula theory is {theory.value} — routing to Z3.")
             plan = parse_smt_formalization(lines)
         else:
-            # ONE narrow call, shaped like the model's training task:
-            # translate the question into labelled formula lines.  The tool
-            # is derived from what came back rather than asked for
-            # separately — measured 3/9 solver-accepted for "emit a JSON
-            # plan" against 9/9 for translation, and a separate tool-naming
-            # call returned "none" every time because the model thinks
-            # before answering.
-            lines = await self._llm_call(
-                system=_FORMALIZE_LINES_SYSTEM,
-                user=user_msg,
-                max_tokens=_DEFAULT_MAX_TOKENS,
-            )
             plan = normalize_plan(parse_formalization(lines, question=question))
         steps.append(f"Formalization: {json.dumps(plan, indent=2)}")
 
@@ -599,7 +719,7 @@ class LogicAdvisor:
                 formalization=plan,
                 solver_output={},
                 steps=steps,
-                verified=False,
+                status=EpistemicStatus.MALFORMED,
             )
 
         # ── Phase 1b: Validate, and repair once if the syntax is bad ────
@@ -617,7 +737,7 @@ class LogicAdvisor:
                     formalization=plan,
                     solver_output={},
                     steps=steps,
-                    verified=False,
+                    status=EpistemicStatus.MALFORMED,
                 )
 
             problem = await self._validation_error(plan)
@@ -630,9 +750,12 @@ class LogicAdvisor:
                         f"attempt. Last validation error: {problem}"
                     ),
                     formalization=plan,
-                    solver_output={"validation_error": problem},
+                    solver_output={
+                        "validation_error": problem,
+                        "status": EpistemicStatus.MALFORMED,
+                    },
                     steps=steps,
-                    verified=False,
+                    status=EpistemicStatus.MALFORMED,
                 )
 
         # ── Phase 2: Execute ────────────────────────────────────────────
@@ -674,7 +797,7 @@ class LogicAdvisor:
                 formalization=plan,
                 solver_output=solver_output,
                 steps=steps,
-                verified=False,
+                status=EpistemicStatus(solver_output["status"]),
             )
 
         # A solver error means there is no verdict to interpret.  Letting the
@@ -696,7 +819,7 @@ class LogicAdvisor:
                 formalization=plan,
                 solver_output=solver_output,
                 steps=steps,
-                verified=False,
+                status=EpistemicStatus(solver_output["status"]),
             )
 
         # ── Phase 2c: Turn "unprovable" into a concrete countermodel ────
@@ -736,6 +859,7 @@ class LogicAdvisor:
             formalization=plan,
             solver_output=solver_output,
             steps=steps,
+            status=EpistemicStatus(solver_output["status"]),
         )
 
     async def query(
@@ -919,53 +1043,71 @@ class LogicAdvisor:
 
         try:
             if tool == "prove":
-                return await self._solver.prove(
+                result = await self._solver.prove(
                     premises=plan.get("premises", []),
                     conclusion=plan.get("conclusion", ""),
                 )
+                return with_status(result, operation=tool)
 
             elif tool == "find_model":
-                return await self._solver.find_model(
+                result = await self._solver.find_model(
                     premises=plan.get("premises", []),
                     domain_size=plan.get("domain_size"),
                 )
+                return with_status(result, operation=tool)
 
             elif tool == "find_counterexample":
-                return await self._solver.find_counterexample(
+                result = await self._solver.find_counterexample(
                     premises=plan.get("premises", []),
                     conclusion=plan.get("conclusion", ""),
                     domain_size=plan.get("domain_size"),
                 )
+                return with_status(result, operation=tool)
 
             elif tool == "check_contingency":
-                return await self._solver.check_contingency(
+                result = await self._solver.check_contingency(
                     formula=plan.get("formula", ""),
                 )
+                return with_status(result, operation=tool)
 
             elif tool == "check_well_formed":
-                return await self._solver.check_well_formed(
+                result = await self._solver.check_well_formed(
                     statements=plan.get("statements", []),
                 )
+                return with_status(result, operation="validate")
 
             elif tool == "prove_arithmetic":
-                return await self._solver.prove_arithmetic(
+                result = await self._solver.prove_arithmetic(
                     premises=plan.get("premises", []),
                     conclusion=plan.get("conclusion", ""),
                     variables=plan.get("variables", {}),
+                    functions=plan.get("functions", {}),
                 )
+                return with_status(result, operation=tool)
 
             elif tool == "check_satisfiable":
-                return await self._solver.check_satisfiable(
+                result = await self._solver.check_satisfiable(
                     constraints=plan.get("constraints", []),
                     variables=plan.get("variables", {}),
+                    functions=plan.get("functions", {}),
                 )
+                return with_status(result, operation=tool)
 
             else:
-                return {"error": f"Unknown tool in plan: {tool}"}
+                return {
+                    "result": "error",
+                    "status": EpistemicStatus.MALFORMED,
+                    "error": f"Unknown tool in plan: {tool}",
+                }
 
         except Exception as exc:
             logger.error("Solver execution failed: %s", exc, exc_info=True)
-            return {"error": str(exc), "type": type(exc).__name__}
+            return {
+                "result": "error",
+                "status": EpistemicStatus.RESOURCE_LIMIT,
+                "error": str(exc),
+                "type": type(exc).__name__,
+            }
 
     # ── Private: Plan parsing ───────────────────────────────────────────
 
@@ -1288,35 +1430,18 @@ def parse_formalization(raw: str, question: str = "", tool: str = "") -> dict[st
     return plan
 
 
-# Prover9 has no theory of arithmetic, so numeric questions must go to Z3
-# instead.  Deliberately conservative: a false positive sends a perfectly
-# good syllogism down the SMT path, which is worse than missing one.
-_ARITHMETIC_RE = re.compile(
-    r"\d"  # any digit — covers "x > 0", "at least 18", "2x"
-    r"|\b(sum|product|divisible|divides|multiple of|remainder|modulo|"
-    r"even|odd|prime|percent|average|squared|plus|minus|"
-    r"greater than|less than|add(s|ed)?|subtract|multiply|divide)\b"
-    r"|[+*]",
-    re.IGNORECASE,
-)
-# Deliberately NOT included: "number", "integer", "at least", "at most".
-# Those appear constantly in ordinary quantifier questions — "at least two
-# distinct elements" is model finding, not arithmetic — and a false positive
-# sends a perfectly good first-order question to a solver that cannot parse
-# it. Anything genuinely numeric carries a digit or an operator anyway.
-
 # "VAR: x Int" → ("x", "Int")
 _VAR_RE = re.compile(
     r"^\s*VAR\s*:\s*(\w+)\s+(Int|Real|Bool)\s*$", re.IGNORECASE | re.MULTILINE
 )
-
-
-def looks_arithmetic(question: str) -> bool:
-    """Whether a question needs a theory of arithmetic to answer.
-
-    Prover9 cannot decide anything numeric, so these must be routed to Z3.
-    """
-    return bool(_ARITHMETIC_RE.search(question))
+_PRED_RE = re.compile(
+    r"^\s*PRED\s*:\s*(\w+)(?:\s+((?:Int|Real|Bool)(?:\s+(?:Int|Real|Bool))*))?\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_FUN_RE = re.compile(
+    r"^\s*FUN\s*:\s*(\w+)\s*(.*?)\s*->\s*(Int|Real|Bool)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
 
 
 # SMT-LIB operators and keywords — anything else in an assertion is a
@@ -1349,12 +1474,15 @@ _SMT_RESERVED = frozenset(
         "declare-fun",
     }
 )
+_SMT_SORTS = frozenset({"Int", "Real", "Bool"})
 _IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_.\-]*")
 _DECIMAL_RE = re.compile(r"\d+\.\d+")
 
 
 def infer_variables(
-    constraints: list[str], declared: dict[str, str] | None = None
+    constraints: list[str],
+    declared: dict[str, str] | None = None,
+    functions: dict[str, list[str]] | None = None,
 ) -> dict[str, str]:
     """Guess declarations for variables the model forgot to declare.
 
@@ -1378,10 +1506,48 @@ def infer_variables(
     joined = " ".join(constraints)
     sort = "Real" if _DECIMAL_RE.search(joined) else "Int"
 
-    for token in _IDENT_RE.findall(joined):
-        if token in _SMT_RESERVED or token in result:
-            continue
-        result[token] = sort
+    function_names = set(functions or {})
+
+    def collect(expression: object, bound: frozenset[str]) -> set[str]:
+        if isinstance(expression, str):
+            if (
+                _IDENT_RE.fullmatch(expression)
+                and expression not in _SMT_RESERVED
+                and expression not in _SMT_SORTS
+                and expression not in bound
+                and expression not in function_names
+            ):
+                return {expression}
+            return set()
+        if not isinstance(expression, list) or not expression:
+            return set()
+        head = expression[0]
+        if head in {"forall", "exists"} and len(expression) >= 3:
+            binders = expression[1]
+            names = {
+                binder[0]
+                for binder in binders
+                if isinstance(binder, list) and binder and isinstance(binder[0], str)
+            }
+            found: set[str] = set()
+            for child in expression[2:]:
+                found.update(collect(child, bound | names))
+            return found
+        found = set()
+        for child in expression[1:]:
+            found.update(collect(child, bound))
+        return found
+
+    inferred: set[str] = set()
+    for constraint in constraints:
+        try:
+            inferred.update(collect(_parse_s_expression(constraint), frozenset()))
+        except ValueError:
+            for token in _IDENT_RE.findall(constraint):
+                if token not in _SMT_RESERVED and token not in function_names:
+                    inferred.add(token)
+    for token in inferred:
+        result.setdefault(token, sort)
     return result
 
 
@@ -1395,6 +1561,13 @@ def parse_smt_formalization(raw: str) -> dict[str, Any]:
     text = _strip_think_blocks(raw)
 
     variables = {name: sort.capitalize() for name, sort in _VAR_RE.findall(text)}
+    functions: dict[str, list[str]] = {}
+    for name, sorts in _PRED_RE.findall(text):
+        args = [sort.capitalize() for sort in sorts.split()] if sorts else []
+        functions[name] = [*args, "Bool"]
+    for name, args, result_sort in _FUN_RE.findall(text):
+        arg_sorts = [sort.capitalize() for sort in args.split()] if args else []
+        functions[name] = [*arg_sorts, result_sort.capitalize()]
     premises: list[str] = []
     goal = ""
 
@@ -1419,12 +1592,14 @@ def parse_smt_formalization(raw: str) -> dict[str, Any]:
             "tool": "prove_arithmetic",
             "premises": premises,
             "conclusion": goal,
-            "variables": infer_variables([*premises, goal], variables),
+            "variables": infer_variables([*premises, goal], variables, functions),
+            "functions": functions,
         }
     return {
         "tool": "check_satisfiable",
         "constraints": premises,
-        "variables": infer_variables(premises, variables),
+        "variables": infer_variables(premises, variables, functions),
+        "functions": functions,
     }
 
 
@@ -1433,6 +1608,12 @@ def _plan_to_lines(plan: dict[str, Any]) -> str:
     lines: list[str] = []
     for name, sort in (plan.get("variables") or {}).items():
         lines.append(f"VAR: {name} {sort}")
+    for name, signature in (plan.get("functions") or {}).items():
+        *args, result = signature
+        if result == "Bool":
+            lines.append(f"PRED: {name} {' '.join(args)}".rstrip())
+        else:
+            lines.append(f"FUN: {name} {' '.join(args)} -> {result}".replace("  ", " "))
     for premise in (
         plan.get("premises") or plan.get("statements") or plan.get("constraints") or []
     ):
@@ -1455,27 +1636,29 @@ def _is_solver_error(output: dict[str, Any]) -> bool:
     """
     if not output:
         return True
-    if "error" in output and output.get("error"):
-        return True
-    return output.get("result") == "error"
+    if "status" in output:
+        return output.get("status") == EpistemicStatus.MALFORMED
+    return bool(output.get("error")) or output.get("result") == "error"
 
 
 def _is_undecided(output: dict[str, Any]) -> bool:
     """Whether the solver returned no verdict at all.
 
-    Three shapes, none of them errors and none of them answers:
+    Two statuses, neither of them a decision:
 
     * Z3 ``unknown`` — nonlinear arithmetic or quantifiers defeated it.
     * Prover9 ``inconclusive`` — the search stopped on a resource limit
       rather than saturating, so it is NOT evidence the conclusion is
       false (first-order validity is only semi-decidable).
-    * an explicit ``definitive: False``.
+    * Mace4 ``BOUNDED_NO_MODEL`` — the configured finite range was exhausted,
+      but no complete-fragment bound licenses an absolute conclusion.
 
     Repairing the formalization would not help in any of these cases.
     """
-    if output.get("result") in {"unknown", "inconclusive", "timeout"}:
-        return True
-    return output.get("definitive") is False
+    return output.get("status") in {
+        EpistemicStatus.RESOURCE_LIMIT,
+        EpistemicStatus.BOUNDED_NO_MODEL,
+    }
 
 
 def _strip_think_blocks(text: str) -> str:
