@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 from mcp_logic.epistemic_status import EpistemicStatus, with_status
+from mcp_logic.faithfulness import FaithfulnessReport, assess
 from mcp_logic.fol_ast import ParseError
 from mcp_logic.fol_ast import parse as parse_fol
 from mcp_logic.syntax_contract import PROVER9_SYNTAX_RULES
@@ -366,6 +367,15 @@ class AdvisorResult:
     status: EpistemicStatus = EpistemicStatus.RESOURCE_LIMIT
     """How much the solver result establishes."""
 
+    faithfulness: FaithfulnessReport = field(default_factory=FaithfulnessReport)
+    """Evidence on whether the formalization matches the question asked.
+
+    A separate axis from :attr:`status`. The status says how firmly the
+    solver decided the formalization; this says whether that formalization
+    was the right one. A result can be ``PROVED`` and still answer the
+    wrong question — that has happened, twice, in live runs.
+    """
+
     @property
     def verified(self) -> bool:
         """Whether the status represents a machine-checked decision.
@@ -537,6 +547,21 @@ PREMISE: (= (mod n 3) 0)
 4. Declare every variable you use with a VAR: line.
 
 If it is not an arithmetic question, output NONE.
+"""
+
+_BACKTRANSLATE_SYSTEM = """\
+You are a formal logic reader. Translate each formal statement into one \
+plain English sentence. Do not judge, solve or comment — only translate.
+
+Output one line per input, in order, prefixed with its label.
+
+Example input:
+PREMISE: all x (human(x) -> mortal(x))
+GOAL: mortal(socrates)
+
+Example output:
+PREMISE: Every human is mortal.
+GOAL: Socrates is mortal.
 """
 
 _REPAIR_SYSTEM = """\
@@ -918,6 +943,15 @@ class LogicAdvisor:
                     f"Countermodel search: {counter.get('result', 'no result')}"
                 )
 
+        # ── Phase 2d: Did we formalize the question that was asked? ─────
+        # The solver certifies the formalization, never the translation
+        # into it. Read the formulas back into English and run the
+        # deterministic gap checks, so a dropped hypothesis or a flipped
+        # goal is visible instead of arriving dressed as a proof.
+        report = await self._assess_faithfulness(question, plan)
+        if report.looks_suspicious:
+            steps.append(f"Faithfulness warnings: {'; '.join(report.warnings)}")
+
         # ── Phase 3: Interpret ──────────────────────────────────────────
         steps.append("Phase 3: Interpreting results with TwIL-LM3...")
         interpret_prompt = (
@@ -939,7 +973,35 @@ class LogicAdvisor:
             solver_output=solver_output,
             steps=steps,
             status=EpistemicStatus(solver_output["status"]),
+            faithfulness=report,
         )
+
+    async def _assess_faithfulness(
+        self, question: str, plan: dict[str, Any]
+    ) -> FaithfulnessReport:
+        """Gather evidence that ``plan`` says what ``question`` asked.
+
+        Back-translation is best-effort: this model reads formulas well
+        most of the time and garbles them occasionally, so its output is
+        surfaced as evidence for the caller rather than used as a verdict.
+        A failure here must never sink an otherwise good answer.
+        """
+        reads_as = ""
+        try:
+            raw = await self._llm_call(
+                system=_BACKTRANSLATE_SYSTEM,
+                user=_plan_to_lines(plan),
+                max_tokens=_DEFAULT_MAX_TOKENS,
+            )
+            reads_as = " ".join(
+                line.strip()
+                for line in _strip_think_blocks(raw).splitlines()
+                if line.strip()
+            )
+        except Exception as exc:  # noqa: BLE001 - evidence gathering only
+            logger.warning("Back-translation failed: %s", exc)
+
+        return assess(question, plan, reads_as=reads_as)
 
     async def query(
         self,

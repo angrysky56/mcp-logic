@@ -20,6 +20,7 @@ import pytest
 
 import mcp_logic.logic_advisor as logic_advisor_module
 from mcp_logic.logic_advisor import (
+    _BACKTRANSLATE_SYSTEM,
     _DEFAULT_MAX_TOKENS,
     _DEFAULT_N_CTX,
     _HF_REVISION,
@@ -202,6 +203,11 @@ def _mock_llm_responses(advisor: LogicAdvisor, responses: list[str]) -> None:
     original_responses = list(responses)
 
     async def fake_llm_call(system: str, user: str, max_tokens: int = 2048) -> str:
+        if system is _BACKTRANSLATE_SYSTEM:
+            # Faithfulness evidence is gathered with an extra call that
+            # tests do not queue responses for. Answer it out of band so
+            # the canned sequence still lines up with the pipeline steps.
+            return "PREMISE: (back-translation stub)"
         idx = call_count["n"]
         call_count["n"] += 1
         if idx < len(original_responses):

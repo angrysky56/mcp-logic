@@ -1342,6 +1342,17 @@ async def _handle_call_tool(
                         "UNVERIFIED: the solver returned no verdict. Do "
                         "not present this as a proved result."
                     )
+
+                # A separate axis from `verified`. The solver can decide
+                # firmly and still have decided the wrong formalization —
+                # observed live twice, both returning REFUTED.
+                response["faithfulness"] = result.faithfulness.to_dict()
+                if result.faithfulness.looks_suspicious:
+                    response["faithfulness_warning"] = (
+                        "The formalization may not match the question asked. "
+                        "Compare 'faithfulness.reads_as' with your question "
+                        "before trusting this, even though the solver decided it."
+                    )
             except AdvisorDisabledError as e:
                 response = {
                     "error": str(e),
